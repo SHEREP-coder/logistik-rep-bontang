@@ -1133,9 +1133,9 @@ export default function App() {
 
                 <div className="space-y-0.5 text-xs font-semibold mb-2 max-w-md">
                   {[['EQUIPMENT', 'equipment'], ['KODE ALAT', 'kodeAlat'], ['LOKASI', 'lokasi']].map(([label, key]) => (
-                    <div key={key} className="flex items-center gap-2"><span className="w-20">{label}</span><span>:</span><input className="po-input border-b border-dotted" value={poHeader[key]} onChange={(e) => setPoHeader({ ...poHeader, [key]: e.target.value })} /></div>
+                    <div key={key} className="flex items-center gap-2"><span className="w-24 shrink-0 whitespace-nowrap">{label}</span><span>:</span><input className="po-input border-b border-dotted" value={poHeader[key]} onChange={(e) => setPoHeader({ ...poHeader, [key]: e.target.value })} /></div>
                   ))}
-                  <div className="flex items-center gap-2"><span className="w-20">TANGGAL</span><span>:</span><input type="date" className="po-input border-b border-dotted" value={poHeader.tanggal} onChange={(e) => setPoHeader({ ...poHeader, tanggal: e.target.value })} /></div>
+                  <div className="flex items-center gap-2"><span className="w-24 shrink-0 whitespace-nowrap">TANGGAL</span><span>:</span><input type="date" className="po-input border-b border-dotted" value={poHeader.tanggal} onChange={(e) => setPoHeader({ ...poHeader, tanggal: e.target.value })} /></div>
                 </div>
 
                 <table className="w-full text-xs" style={{ borderCollapse: 'collapse', border: `2px solid ${INK}` }}>
@@ -1165,13 +1165,11 @@ export default function App() {
                 <div className="flex justify-between mt-2 text-xs font-semibold px-8">
                   <div className="text-center w-56">
                     <div>DIKETAHUI OLEH,</div>
-                    <div style={{ height: 36 }} />
-                    <input className="po-input text-center border-b border-dotted" placeholder="(nama)" value={poHeader.diketahuiOleh} onChange={(e) => setPoHeader({ ...poHeader, diketahuiOleh: e.target.value })} />
+                    <div style={{ height: 56 }} />
                   </div>
                   <div className="text-center w-56">
                     <div>DIBUAT OLEH,</div>
-                    <div style={{ height: 36 }} />
-                    <div className="border-b border-dotted" style={{ borderColor: INK }}>{profile.nama}</div>
+                    <div style={{ height: 56 }} />
                   </div>
                 </div>
               </div>
