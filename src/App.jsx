@@ -47,6 +47,69 @@ const PO_KANTOR = 'BALIKPAPAN'; // tulisan di bawah nama PT pada blangko PO
 const MONTHS_ID = ['Jan', 'Feb', 'Mar', 'Apr', 'Mei', 'Jun', 'Jul', 'Agu', 'Sep', 'Okt', 'Nov', 'Des'];
 const INK = '#1e3a5f';
 
+const THEMES = {
+  kuning: { name: 'Kuning Emas', accent: '#eab308', accentText: '#0f172a', side: '#0f172a', sideDark: '#020617' },
+  biru: { name: 'Biru Laut', accent: '#0284c7', accentText: '#ffffff', side: '#0c2a4a', sideDark: '#071a2f' },
+  hijau: { name: 'Hijau Zamrud', accent: '#059669', accentText: '#ffffff', side: '#064e3b', sideDark: '#022c22' },
+  ungu: { name: 'Ungu Royal', accent: '#7c3aed', accentText: '#ffffff', side: '#2e1065', sideDark: '#1a0a3d' },
+  merah: { name: 'Merah Marun', accent: '#e11d48', accentText: '#ffffff', side: '#4c0519', sideDark: '#2d0210' },
+  oranye: { name: 'Oranye Tambang', accent: '#ea580c', accentText: '#ffffff', side: '#431407', sideDark: '#260b03' },
+  teal: { name: 'Teal Grafit', accent: '#0d9488', accentText: '#ffffff', side: '#1f2937', sideDark: '#111827' },
+};
+
+// Warna tema diterapkan lewat CSS variable (diatur di Pengaturan)
+const themeCss = `
+  :root { --accent: #eab308; --accent-text: #0f172a; --side: #0f172a; --side-dark: #020617; }
+  .bg-yellow-500 { background-color: var(--accent) !important; color: var(--accent-text) !important; }
+  .hover\\:bg-yellow-400:hover { filter: brightness(1.08); }
+  .text-yellow-400, .text-yellow-500, .text-yellow-600 { color: var(--accent) !important; }
+  .border-yellow-500, .focus\\:border-yellow-500:focus { border-color: var(--accent) !important; }
+`;
+
+// Ambil nilai kolom Excel dengan nama header yang fleksibel (abaikan spasi, titik, huruf besar-kecil)
+const pickVal = (row, names) => {
+  for (const k of Object.keys(row)) {
+    const nk = k.toLowerCase().replace(/[^a-z0-9]/g, '');
+    if (names.includes(nk)) return row[k];
+  }
+  return undefined;
+};
+
+const focusById = (id) => setTimeout(() => { const el = document.getElementById(id); if (el) { el.focus(); if (el.select) el.select(); } }, 60);
+
+// Enter = pindah ke kolom berikutnya; Enter di kolom terakhir = simpan
+const enterNext = (e) => {
+  if (e.key !== 'Enter' || (e.nativeEvent && e.nativeEvent.isComposing)) return;
+  const t = e.target;
+  if (t.tagName === 'BUTTON' || t.tagName === 'TEXTAREA') return;
+  e.preventDefault();
+  const form = e.currentTarget;
+  const fields = Array.from(form.querySelectorAll('input, select, textarea'))
+    .filter((el) => el.type !== 'hidden' && !el.readOnly && !el.disabled && el.offsetParent !== null);
+  const i = fields.indexOf(t);
+  if (i > -1 && i < fields.length - 1) {
+    const next = fields[i + 1];
+    next.focus();
+    try { if (next.select) next.select(); } catch (err) { /* jenis input tertentu (mis. tanggal) tidak mendukung select */ }
+  } else {
+    form.requestSubmit();
+  }
+};
+
+// Availability (%) = (Qty - Kekurangan Supply) / Qty x 100
+const availPct = (qty, kek) => {
+  const q = Number(qty); const k = Number(kek || 0);
+  if (!Number.isFinite(q) || q <= 0 || !Number.isFinite(k)) return null;
+  return Math.max(0, Math.min(100, ((q - k) / q) * 100));
+};
+const fmtPct = (v) => (v === null ? '-' : `${String(Math.round(v * 10) / 10).replace('.', ',')}%`);
+const withAvail = (r) => { const a = availPct(r.Qty, r['Kekurangan Supply']); return { ...r, 'Availability (%)': a === null ? '' : Math.round(a * 10) / 10 }; };
+const colIdx = (L) => L.split('').reduce((n, c) => n * 26 + c.charCodeAt(0) - 64, 0);
+
+function Field({ label, children, className = '' }) {
+  return <div className={className}><label className="block font-semibold mb-1">{label}</label>{children}</div>;
+}
+
 const usernameToEmail = (u) => {
   const s = String(u || '').trim().toLowerCase();
   return s.includes('@') ? s : `${s}@logistik-rep.local`;
@@ -174,6 +237,14 @@ export default function App() {
   const [selectedMonth, setSelectedMonth] = useState('');
   const [selectedYear, setSelectedYear] = useState('');
   const [darkMode, setDarkMode] = useState(false);
+  const [themeKey, setThemeKey] = useState(() => { try { const k = localStorage.getItem('rep_theme'); return THEMES[k] ? k : 'kuning'; } catch (e) { return 'kuning'; } });
+  useEffect(() => {
+    const t = THEMES[themeKey] || THEMES.kuning;
+    const r = document.documentElement.style;
+    r.setProperty('--accent', t.accent); r.setProperty('--accent-text', t.accentText);
+    r.setProperty('--side', t.side); r.setProperty('--side-dark', t.sideDark);
+    try { localStorage.setItem('rep_theme', themeKey); } catch (e) { /* abaikan */ }
+  }, [themeKey]);
   const [fontSize, setFontSize] = useState(() => { try { return Number(localStorage.getItem('rep_font')) || 18; } catch (e) { return 18; } });
   useEffect(() => {
     document.documentElement.style.fontSize = fontSize + 'px';
@@ -197,11 +268,13 @@ export default function App() {
   const [editingMaterialId, setEditingMaterialId] = useState(null);
   const [showModalMasuk, setShowModalMasuk] = useState(false);
   const [showModalKeluar, setShowModalKeluar] = useState(false);
+  const [editingMasukId, setEditingMasukId] = useState(null);
+  const [editingKeluarId, setEditingKeluarId] = useState(null);
   const [showModalUser, setShowModalUser] = useState(false);
 
-  const emptyMaterial = { kode: '', nama: '', nomor: '', unit: 'Ea', lokasi: 'Rak A1', minQty: 5, qty: 0 };
-  const emptyMasuk = { tanggal: todayISO(), unit: '', kode: '', description: '', merk: '', qty: '', satuan: 'Pcs', noPo: '' };
-  const emptyKeluar = { tanggal: todayISO(), unit: '', kode: '', namaBarang: '', mekanik: '', qty: '', keterangan: '' };
+  const emptyMaterial = { kode: '', nama: '', nomor: '', partUnit: '', baseUnit: '', satuan: '', lokasi: 'Rak A1', minQty: 5, qty: 0 };
+  const emptyMasuk = { tanggal: todayISO(), unit: '', kode: '', materialNumber: '', description: '', merk: '', qty: '', satuan: 'Pcs', noPo: '', suratJalan: '', kekurangan: '', keterangan: '' };
+  const emptyKeluar = { tanggal: todayISO(), unit: '', kode: '', nomorBarang: '', namaBarang: '', mekanik: '', noWo: '', hmKm: '', qty: '', keterangan: '' };
   const [formMaterial, setFormMaterial] = useState(emptyMaterial);
   const [formMasuk, setFormMasuk] = useState(emptyMasuk);
   const [formKeluar, setFormKeluar] = useState(emptyKeluar);
@@ -339,11 +412,29 @@ export default function App() {
   const q = pencarian.toLowerCase();
   const has = (v) => String(v ?? '').toLowerCase().includes(q);
 
-  const filteredMaterial = useMemo(() => dataMaterial.filter((i) => !q || has(i['Nama Barang']) || has(i.Kode) || has(i['Nomor Barang']) || has(i.Lokasi)), [dataMaterial, q]); // eslint-disable-line
-  const filteredMasuk = sortedMasuk.filter((i) => (!q || has(i.Description) || has(i.Kode) || has(i['No. PO']) || has(i.Unit)) && matchesPeriod(i.Tanggal));
-  const filteredKeluar = sortedKeluar.filter((i) => (!q || has(i['Nama Barang']) || has(i.Kode) || has(i.Unit) || has(i.Mekanik)) && matchesPeriod(i['Doc.Date']));
+  const filteredMaterial = useMemo(() => dataMaterial.filter((i) => !q || has(i['Nama Barang']) || has(i.Kode) || has(i['Nomor Barang']) || has(i.Lokasi) || has(i['Part Unit']) || has(i['Base Unit of Measure'])), [dataMaterial, q]); // eslint-disable-line
+  const filteredMasuk = sortedMasuk.filter((i) => (!q || has(i.Description) || has(i.Kode) || has(i['No. PO']) || has(i.Unit) || has(i.Merk) || has(i['Material Number']) || has(i['No. Surat Jalan']) || has(i.Keterangan)) && matchesPeriod(i.Tanggal));
+  const filteredKeluar = sortedKeluar.filter((i) => (!q || has(i['Nama Barang']) || has(i.Kode) || has(i.Unit) || has(i.Mekanik) || has(i['No. WO']) || has(i['Nomor Barang'])) && matchesPeriod(i['Doc.Date']));
 
   const poNeededItems = useMemo(() => dataMaterial.filter((i) => Number(i.Qty || 0) <= Number(i.MinQty ?? 5)), [dataMaterial]);
+
+  // ringkasan untuk dashboard (Rekap Stok, Stok Opname, PO)
+  const dashRekap = useMemo(() => {
+    let stok = 0, habis = 0;
+    dataMaterial.forEach((m) => { const q = Number(m.Qty || 0); stok += q; if (q <= 0) habis += 1; });
+    let masuk = 0, keluar = 0;
+    dataMasuk.forEach((r) => { masuk += Number(r.Qty || 0); });
+    dataKeluar.forEach((r) => { keluar += Number(r.Qty || 0); });
+    return { stok, habis, masuk, keluar };
+  }, [dataMaterial, dataMasuk, dataKeluar]);
+  const lastOpname = useMemo(() => [...riwayatOpname].sort((a, b) => String(b.tanggal || '').localeCompare(String(a.tanggal || '')))[0] || null, [riwayatOpname]);
+  const lastPo = useMemo(() => riwayatPo.reduce((best, p) => (!best || poNumberValue(p.noPo) > poNumberValue(best.noPo) ? p : best), null), [riwayatPo]);
+
+  const partUnitOptions = useMemo(() => {
+    const st = new Set();
+    dataMaterial.forEach((m) => { if (m['Part Unit'] && m['Part Unit'] !== 'Ea') st.add(m['Part Unit']); });
+    return [...st].sort();
+  }, [dataMaterial]);
 
   const totalsByKode = useMemo(() => {
     const t = new Map();
@@ -377,7 +468,8 @@ export default function App() {
     setEditingMaterialId(item.id);
     setFormMaterial({
       kode: item.Kode || '', nama: item['Nama Barang'] || '', nomor: item['Nomor Barang'] ?? '',
-      unit: item['Part Unit'] || 'Ea', lokasi: item.Lokasi || 'Rak A1', minQty: item.MinQty ?? 5, qty: item.Qty ?? 0
+      partUnit: item['Part Unit'] || '', baseUnit: item['Base Unit of Measure'] || '', satuan: item.Satuan || '',
+      lokasi: item.Lokasi || 'Rak A1', minQty: item.MinQty ?? 5, qty: item.Qty ?? 0
     });
     setShowModalMaterial(true);
   };
@@ -390,7 +482,9 @@ export default function App() {
     const base = {
       'Nama Barang': formMaterial.nama.trim(),
       'Nomor Barang': String(formMaterial.nomor).trim(),
-      'Part Unit': formMaterial.unit.trim() || 'Ea',
+      'Part Unit': formMaterial.partUnit.trim(),
+      'Base Unit of Measure': formMaterial.baseUnit.trim(),
+      Satuan: formMaterial.satuan.trim(),
       Lokasi: formMaterial.lokasi.trim() || 'Rak A1',
       MinQty: Number(formMaterial.minQty) || 0
     };
@@ -399,6 +493,7 @@ export default function App() {
       if (editingMaterialId) {
         await updateDoc(doc(db, 'material', editingMaterialId), { ...base, updatedAt: serverTimestamp(), updatedBy: profile.username });
         notify('Data barang diperbarui.');
+        setShowModalMaterial(false);
       } else {
         const id = safeId(kode);
         if (dataMaterial.some((m) => m.id === id || String(m.Kode).toLowerCase() === kode.toLowerCase())) {
@@ -406,12 +501,13 @@ export default function App() {
           return notify('Kode barang sudah ada di Master Barang.', 'error');
         }
         await setDoc(doc(db, 'material', id), {
-          Kode: kode, ...base, 'Base Unit of Measure': 'Ea',
-          Qty: Number(formMaterial.qty) || 0, createdAt: serverTimestamp(), createdBy: profile.username
+          Kode: kode, ...base, Qty: Number(formMaterial.qty) || 0, createdAt: serverTimestamp(), createdBy: profile.username
         });
-        notify('Produk baru berhasil disimpan.');
+        notify(`Produk ${kode} tersimpan. Silakan input barang berikutnya.`);
+        // form tetap terbuka; kolom yang biasanya sama dipertahankan
+        setFormMaterial((f) => ({ ...emptyMaterial, partUnit: f.partUnit, satuan: f.satuan, lokasi: f.lokasi, minQty: f.minQty }));
+        focusById('fm-kode');
       }
-      setShowModalMaterial(false);
     } catch (err) { console.error(err); notify('Gagal menyimpan: ' + (err.code || err.message), 'error'); }
     setSaving(false);
   };
@@ -426,13 +522,36 @@ export default function App() {
   /* ============================== AKSI: STOK MASUK / KELUAR ============================== */
   const lookupMasuk = (kode) => {
     const found = materialByKode.get(String(kode).trim().toLowerCase());
-    setFormMasuk((p) => ({ ...p, kode, ...(found ? { description: found['Nama Barang'] || '', merk: found['Nomor Barang'] ?? '' } : {}) }));
+    setFormMasuk((p) => ({ ...p, kode, ...(found ? { description: found['Nama Barang'] || '', merk: found['Part Unit'] || p.merk, materialNumber: found['Nomor Barang'] ?? '', satuan: found.Satuan || p.satuan } : {}) }));
   };
   const lookupKeluar = (kode) => {
     const found = materialByKode.get(String(kode).trim().toLowerCase());
-    setFormKeluar((p) => ({ ...p, kode, ...(found ? { namaBarang: found['Nama Barang'] || '' } : {}) }));
+    setFormKeluar((p) => ({ ...p, kode, nomorBarang: found ? (found['Nomor Barang'] ?? '') : '', ...(found ? { namaBarang: found['Nama Barang'] || '' } : {}) }));
   };
-  const preventEnterSubmit = (e) => { if (e.key === 'Enter') e.preventDefault(); };
+
+  const openEditMasuk = (item) => {
+    setEditingMasukId(item.id);
+    setFormMasuk({
+      tanggal: toISODate(item.Tanggal) || todayISO(), unit: item.Unit || '', kode: item.Kode || '',
+      materialNumber: item['Material Number'] || materialByKode.get(String(item.Kode || '').toLowerCase())?.['Nomor Barang'] || '',
+      description: item.Description || '', merk: item.Merk || '', qty: String(item.Qty ?? ''), satuan: item.Satuan || item['Qty.1'] || 'Pcs',
+      noPo: item['No. PO'] || '', suratJalan: item['No. Surat Jalan'] || '',
+      kekurangan: Number(item['Kekurangan Supply'] || 0) ? String(item['Kekurangan Supply']) : '', keterangan: item.Keterangan || ''
+    });
+    setShowModalMasuk(true);
+  };
+  const openEditKeluar = (item) => {
+    setEditingKeluarId(item.id);
+    setFormKeluar({
+      tanggal: toISODate(item['Doc.Date']) || todayISO(), unit: item.Unit || '', kode: item.Kode || '',
+      nomorBarang: item['Nomor Barang'] || materialByKode.get(String(item.Kode || '').toLowerCase())?.['Nomor Barang'] || '',
+      namaBarang: item['Nama Barang'] || '', mekanik: item.Mekanik || '', noWo: item['No. WO'] || '', hmKm: String(item.HM_KM ?? ''),
+      qty: String(item.Qty ?? ''), keterangan: item.Keterangan || ''
+    });
+    setShowModalKeluar(true);
+  };
+  const closeModalMasuk = () => { setShowModalMasuk(false); setEditingMasukId(null); };
+  const closeModalKeluar = () => { setShowModalKeluar(false); setEditingKeluarId(null); };
 
   const handleAddMasuk = async (e) => {
     e.preventDefault();
@@ -444,20 +563,57 @@ export default function App() {
     setSaving(true);
     try {
       const matRef = doc(db, 'material', mat.id);
+      const fields = {
+        Tanggal: formMasuk.tanggal, Unit: formMasuk.unit.trim(), Kode: mat.Kode,
+        'Material Number': String(formMasuk.materialNumber).trim(),
+        Description: formMasuk.description.trim(), Merk: String(formMasuk.merk).trim(),
+        'No. PO': formMasuk.noPo.trim(), 'No. Surat Jalan': formMasuk.suratJalan.trim(), Qty: qty, Satuan: formMasuk.satuan.trim(),
+        'Kekurangan Supply': formMasuk.kekurangan === '' ? 0 : Number(formMasuk.kekurangan) || 0,
+        Keterangan: formMasuk.keterangan.trim()
+      };
+      if (editingMasukId) {
+        // EDIT: stok dikoreksi sebesar selisih qty lama dan baru
+        const trxRef = doc(db, 'barangMasuk', editingMasukId);
+        await runTransaction(db, async (t) => {
+          const oldSnap = await t.get(trxRef);
+          if (!oldSnap.exists()) throw new Error('Transaksi tidak ditemukan (mungkin sudah dihapus).');
+          const old = oldSnap.data();
+          const oldQty = Number(old.Qty || 0);
+          const oldMat = materialByKode.get(String(old.Kode || '').toLowerCase());
+          const sameMat = !oldMat || oldMat.id === mat.id;
+          const newSnap = await t.get(matRef);
+          if (!newSnap.exists()) throw new Error('Master barang tidak ditemukan');
+          const oldMatSnap = sameMat ? null : await t.get(doc(db, 'material', oldMat.id));
+          if (sameMat) {
+            const next = Number(newSnap.data().Qty || 0) - (oldMat ? oldQty : 0) + qty;
+            if (next < 0) throw new Error(`Stok akan menjadi minus (${next}). Perubahan tidak bisa disimpan.`);
+            t.update(matRef, { Qty: next });
+          } else {
+            if (oldMatSnap.exists()) {
+              const c = Number(oldMatSnap.data().Qty || 0);
+              if (c < oldQty) throw new Error(`Stok ${oldMat.Kode} (${c}) lebih kecil dari qty lama (${oldQty}); kode tidak bisa diganti.`);
+              t.update(oldMatSnap.ref, { Qty: c - oldQty });
+            }
+            t.update(matRef, { Qty: Number(newSnap.data().Qty || 0) + qty });
+          }
+          t.update(trxRef, { ...fields, updatedAt: serverTimestamp(), updatedBy: profile.username });
+        });
+        notify(`Stok masuk ${mat.Kode} berhasil diedit & stok dikoreksi.`);
+        setFormMasuk({ ...emptyMasuk, tanggal: todayISO() });
+        closeModalMasuk();
+        setSaving(false);
+        return;
+      }
       const newRef = doc(collection(db, 'barangMasuk'));
       await runTransaction(db, async (t) => {
         const s = await t.get(matRef);
         if (!s.exists()) throw new Error('Master barang tidak ditemukan');
         t.update(matRef, { Qty: Number(s.data().Qty || 0) + qty });
-        t.set(newRef, {
-          Tanggal: formMasuk.tanggal, Unit: formMasuk.unit.trim(), Kode: mat.Kode,
-          Description: formMasuk.description.trim(), Merk: String(formMasuk.merk).trim(),
-          Qty: qty, Satuan: formMasuk.satuan.trim(), 'No. PO': formMasuk.noPo.trim(),
-          createdAt: serverTimestamp(), createdBy: profile.username
-        });
+        t.set(newRef, { ...fields, createdAt: serverTimestamp(), createdBy: profile.username });
       });
-      setShowModalMasuk(false); setFormMasuk(emptyMasuk);
-      notify('Stok masuk tercatat & stok bertambah.');
+      notify(`Stok masuk ${mat.Kode} (+${qty}) tersimpan. Silakan input barang berikutnya.`);
+      setFormMasuk((f) => ({ ...emptyMasuk, tanggal: f.tanggal, unit: f.unit, noPo: f.noPo, suratJalan: f.suratJalan, satuan: f.satuan }));
+      focusById('fi-kode');
     } catch (err) { console.error(err); notify('Gagal: ' + (err.message || err.code), 'error'); }
     setSaving(false);
   };
@@ -472,6 +628,44 @@ export default function App() {
     setSaving(true);
     try {
       const matRef = doc(db, 'material', mat.id);
+      const fields = {
+        'Doc.Date': formKeluar.tanggal, Unit: formKeluar.unit.trim(), Kode: mat.Kode,
+        'Nomor Barang': String(formKeluar.nomorBarang).trim(),
+        'Nama Barang': formKeluar.namaBarang.trim(), Mekanik: formKeluar.mekanik.trim(),
+        'No. WO': formKeluar.noWo.trim(), HM_KM: formKeluar.hmKm.trim(),
+        Keterangan: formKeluar.keterangan.trim(), Qty: qty
+      };
+      if (editingKeluarId) {
+        // EDIT: stok dikoreksi sebesar selisih qty lama dan baru
+        const trxRef = doc(db, 'barangKeluar', editingKeluarId);
+        await runTransaction(db, async (t) => {
+          const oldSnap = await t.get(trxRef);
+          if (!oldSnap.exists()) throw new Error('Transaksi tidak ditemukan (mungkin sudah dihapus).');
+          const old = oldSnap.data();
+          const oldQty = Number(old.Qty || 0);
+          const oldMat = materialByKode.get(String(old.Kode || '').toLowerCase());
+          const sameMat = !oldMat || oldMat.id === mat.id;
+          const newSnap = await t.get(matRef);
+          if (!newSnap.exists()) throw new Error('Master barang tidak ditemukan');
+          const oldMatSnap = sameMat ? null : await t.get(doc(db, 'material', oldMat.id));
+          const cur = Number(newSnap.data().Qty || 0);
+          if (sameMat) {
+            const next = cur + (oldMat ? oldQty : 0) - qty;
+            if (next < 0) throw new Error(`Stok tidak cukup. Stok tersedia untuk transaksi ini: ${cur + (oldMat ? oldQty : 0)}`);
+            t.update(matRef, { Qty: next });
+          } else {
+            if (cur < qty) throw new Error(`Stok tidak cukup. Stok saat ini: ${cur}`);
+            if (oldMatSnap.exists()) t.update(oldMatSnap.ref, { Qty: Number(oldMatSnap.data().Qty || 0) + oldQty });
+            t.update(matRef, { Qty: cur - qty });
+          }
+          t.update(trxRef, { ...fields, updatedAt: serverTimestamp(), updatedBy: profile.username });
+        });
+        notify(`Stok keluar ${mat.Kode} berhasil diedit & stok dikoreksi.`);
+        setFormKeluar({ ...emptyKeluar, tanggal: todayISO() });
+        closeModalKeluar();
+        setSaving(false);
+        return;
+      }
       const newRef = doc(collection(db, 'barangKeluar'));
       await runTransaction(db, async (t) => {
         const s = await t.get(matRef);
@@ -479,14 +673,11 @@ export default function App() {
         const cur = Number(s.data().Qty || 0);
         if (cur < qty) throw new Error(`Stok tidak cukup. Stok saat ini: ${cur}`);
         t.update(matRef, { Qty: cur - qty });
-        t.set(newRef, {
-          'Doc.Date': formKeluar.tanggal, Unit: formKeluar.unit.trim(), Kode: mat.Kode,
-          'Nama Barang': formKeluar.namaBarang.trim(), Mekanik: formKeluar.mekanik.trim(), Qty: qty,
-          Keterangan: formKeluar.keterangan.trim(), createdAt: serverTimestamp(), createdBy: profile.username
-        });
+        t.set(newRef, { ...fields, createdAt: serverTimestamp(), createdBy: profile.username });
       });
-      setShowModalKeluar(false); setFormKeluar(emptyKeluar);
-      notify('Stok keluar tercatat & stok berkurang.');
+      notify(`Stok keluar ${mat.Kode} (-${qty}) tersimpan. Silakan input barang berikutnya.`);
+      setFormKeluar((f) => ({ ...emptyKeluar, tanggal: f.tanggal, unit: f.unit, mekanik: f.mekanik, noWo: f.noWo, hmKm: f.hmKm }));
+      focusById('fk-kode');
     } catch (err) { console.error(err); notify('Gagal: ' + (err.message || err.code), 'error'); }
     setSaving(false);
   };
@@ -690,13 +881,36 @@ export default function App() {
   };
 
   /* ============================== IMPOR / EKSPOR EXCEL ============================== */
-  const sheetRows = (wb, name, headerRowSkip = 0, mustHave = 'Kode') => {
+  // Membaca sheet: tiap baris menjadi objek berkunci nama header, plus akses per huruf kolom lewat colVal(r, 'E')
+  const sheetRows = (wb, name, headerRowSkip = 0) => {
     const ws = wb.Sheets[name];
     if (!ws) return [];
-    let rows = XLSX.utils.sheet_to_json(ws, headerRowSkip ? { range: headerRowSkip } : {});
-    if (headerRowSkip && rows.length && !(mustHave in rows[0])) rows = XLSX.utils.sheet_to_json(ws);
+    const parse = (skip) => {
+      const raw = XLSX.utils.sheet_to_json(ws, { header: 'A', ...(skip ? { range: skip } : {}) });
+      if (!raw.length) return [];
+      const hdr = raw[0];
+      const letters = Object.keys(hdr).sort((x, y) => colIdx(x) - colIdx(y));
+      const seen = {}; const keyOf = {};
+      letters.forEach((L) => {
+        const label = String(hdr[L] ?? '').trim() || L;
+        seen[label] = (seen[label] || 0) + 1;
+        keyOf[L] = seen[label] === 1 ? label : `${label}.${seen[label] - 1}`;
+      });
+      const rows = raw.slice(1).map((rw) => {
+        const o = {};
+        Object.keys(rw).forEach((L) => { if (keyOf[L]) o[keyOf[L]] = rw[L]; });
+        Object.defineProperty(o, '__col', { value: rw, enumerable: false });
+        return o;
+      });
+      rows.hdr = hdr;
+      return rows;
+    };
+    let rows = parse(headerRowSkip);
+    if (headerRowSkip && rows.hdr && !Object.values(rows.hdr).some((v) => String(v).trim().toLowerCase() === 'kode')) rows = parse(0);
     return rows;
   };
+  const colVal = (r, L) => (r.__col ? r.__col[L] : undefined);
+  const hdrInfo = (rows) => (rows.hdr ? Object.keys(rows.hdr).sort((x, y) => colIdx(x) - colIdx(y)).map((L) => `${L}=${rows.hdr[L]}`).join(', ') : '(sheet tidak ditemukan)');
 
   const importWorkbook = async (wb) => {
     if (!isAdmin) return notify('Hanya Admin yang dapat mengimpor.', 'error');
@@ -707,20 +921,41 @@ export default function App() {
       const masukRows = sheetRows(wb, 'Barang Masuk');
       const keluarRows = sheetRows(wb, 'Barang Keluar', 1);
 
-      // 1) Material: hanya tambah yang belum ada (stok yang sudah ada TIDAK ditimpa)
-      const existingIds = new Set(dataMaterial.map((m) => m.id));
       const str = (v) => (v === undefined || v === null ? '' : String(v).trim());
       const num = (v, d = 0) => { const n = Number(v); return Number.isFinite(n) ? n : d; };
+      // Sheet MATERIAL: Part Unit = kolom F, Base Unit of Measure = kolom H
+      const partUnitOf = (r) => str(colVal(r, 'F'));
+      const baseUnitOf = (r) => str(colVal(r, 'H'));
+      const satuanOf = (r) => {
+        const v = pickVal(r, ['satuan', 'uom']);
+        if (v !== undefined && v !== null && String(v).trim() !== '') return String(v).trim();
+        return typeof r.Qty === 'string' && !Number.isFinite(Number(r.Qty)) ? r.Qty.trim() : '';
+      };
+
+      // 1) MATERIAL: tambah barang baru; barang lama hanya dilengkapi/disinkronkan (stok TIDAK ditimpa)
+      const existingIds = new Set(dataMaterial.map((m) => m.id));
       const newMat = matRows.filter((r) => r.Kode !== undefined && String(r.Kode).trim() !== '' && !existingIds.has(safeId(r.Kode)))
         .map((r) => {
           const kode = String(r.Kode).trim();
           return { id: safeId(kode), data: {
             Kode: kode, 'Nama Barang': str(r['Nama Barang']), 'Nomor Barang': str(r['Nomor Barang']),
-            'Part Unit': str(r['Part Unit']) || 'Ea', 'Base Unit of Measure': str(r['Base Unit of Measure']) || 'Ea',
+            'Part Unit': partUnitOf(r), 'Base Unit of Measure': baseUnitOf(r),
+            Satuan: satuanOf(r),
             Qty: num(r.Qty), Lokasi: str(r.Lokasi) || 'Rak A1', MinQty: r.MinQty !== undefined ? num(r.MinQty, 5) : 5,
             createdAt: serverTimestamp(), createdBy: profile.username
           } };
         });
+      const existingById = new Map(dataMaterial.map((m) => [m.id, m]));
+      const backfill = matRows.filter((r) => r.Kode !== undefined && String(r.Kode).trim() !== '').map((r) => {
+        const id = safeId(r.Kode); const ex = existingById.get(id);
+        if (!ex) return null;
+        const upd = {};
+        const sat = satuanOf(r); if (!ex.Satuan && sat) upd.Satuan = sat;
+        const pu = partUnitOf(r); if (pu !== str(ex['Part Unit'])) upd['Part Unit'] = pu;
+        const bu = baseUnitOf(r); if (bu !== str(ex['Base Unit of Measure'])) upd['Base Unit of Measure'] = bu;
+        return Object.keys(upd).length ? { id, upd } : null;
+      }).filter(Boolean);
+
       stage = 'master barang';
       let done = 0;
       for (const part of chunk(newMat, 400)) {
@@ -730,16 +965,34 @@ export default function App() {
         done += part.length;
         setImportMsg(`Mengimpor master barang... ${done}/${newMat.length}`);
       }
+      stage = 'memperbarui data master barang';
+      let filled = 0;
+      for (const part of chunk(backfill, 400)) {
+        const batch = writeBatch(db);
+        part.forEach((x) => batch.update(doc(db, 'material', x.id), x.upd));
+        await batch.commit();
+        filled += part.length;
+        setImportMsg(`Memperbarui data master barang... ${filled}/${backfill.length}`);
+      }
 
-      // 2) Barang masuk/keluar: hanya jika koleksi masih kosong (hindari data ganda)
-      let masukCount = 0; let keluarCount = 0;
+      // 2) BARANG MASUK. Material Number = kolom E
+      const kekOf = (r) => { const v = pickVal(r, ['kekurangansupply', 'kekurangan', 'shortage']); return v === undefined ? undefined : (Number.isFinite(Number(v)) ? Number(v) : String(v)); };
+      const masukFields = (r) => clean({
+        'Material Number': str(colVal(r, 'E')) || undefined,
+        'No. PO': str(pickVal(r, ['nopo', 'nomorpo', 'po', 'ponumber'])) || undefined,
+        'No. Surat Jalan': str(pickVal(r, ['nosuratjalan', 'nomorsuratjalan', 'suratjalan', 'nosj', 'sj', 'nodo', 'deliveryorder'])) || undefined,
+        Satuan: str(r['Qty.1'] !== undefined ? r['Qty.1'] : pickVal(r, ['satuan', 'uom'])) || undefined,
+        'Kekurangan Supply': kekOf(r),
+        Keterangan: str(pickVal(r, ['keterangan', 'ket', 'remark', 'remarks'])) || undefined
+      });
+      const sigM = (tgl, kode, qty, unit) => `${toISODate(tgl)}|${str(kode).toLowerCase()}|${num(qty)}|${str(unit).toLowerCase()}`;
+      let masukCount = 0; let keluarCount = 0; let fillM = 0; let fillK = 0;
       if (dataMasuk.length === 0) {
         stage = 'barang masuk';
-        const rows = masukRows.filter((r) => r.Kode !== undefined).map((r) => clean({
-          Tanggal: toISODate(r.Tanggal), Unit: r.Unit !== undefined ? String(r.Unit) : '', Kode: String(r.Kode).trim(),
-          Description: r.Description !== undefined ? String(r.Description) : '', Merk: r.Merk !== undefined ? String(r.Merk) : '',
-          Qty: Number(r.Qty) || 0, Satuan: r['Qty.1'] || r.Satuan || '', 'No. PO': r['No. PO'] !== undefined ? String(r['No. PO']) : '',
-          createdAt: serverTimestamp(), createdBy: profile.username
+        const rows = masukRows.filter((r) => r.Kode !== undefined).map((r) => ({
+          Tanggal: toISODate(r.Tanggal), Unit: str(r.Unit), Kode: str(r.Kode), 'Material Number': '',
+          Description: str(r.Description), Merk: str(r.Merk), 'No. PO': '', 'No. Surat Jalan': '', Qty: num(r.Qty), Satuan: '',
+          createdAt: serverTimestamp(), createdBy: profile.username, ...masukFields(r)
         }));
         for (const part of chunk(rows, 400)) {
           const batch = writeBatch(db);
@@ -747,14 +1000,40 @@ export default function App() {
           await batch.commit(); masukCount += part.length;
           setImportMsg(`Mengimpor barang masuk... ${masukCount}/${rows.length}`);
         }
+      } else {
+        stage = 'melengkapi barang masuk';
+        const mp = new Map();
+        masukRows.filter((r) => r.Kode !== undefined).forEach((r) => { const k = sigM(r.Tanggal, r.Kode, r.Qty, r.Unit); if (!mp.has(k)) mp.set(k, []); mp.get(k).push(masukFields(r)); });
+        const ups = [];
+        dataMasuk.forEach((d) => {
+          const list = mp.get(sigM(d.Tanggal, d.Kode, d.Qty, d.Unit));
+          if (!list || !list.length) return;
+          const f = list.shift(); const upd = {};
+          Object.entries(f).forEach(([key, val]) => { const cur = d[key]; if (cur === undefined || cur === null || cur === '') upd[key] = val; });
+          if (Object.keys(upd).length) ups.push({ id: d.id, upd });
+        });
+        for (const part of chunk(ups, 400)) {
+          const batch = writeBatch(db);
+          part.forEach((x) => batch.update(doc(db, 'barangMasuk', x.id), x.upd));
+          await batch.commit(); fillM += part.length;
+          setImportMsg(`Melengkapi barang masuk... ${fillM}/${ups.length}`);
+        }
       }
+
+      // 3) BARANG KELUAR
+      const keluarFields = (r) => clean({
+        'Nomor Barang': str(pickVal(r, ['nomorbarang', 'materialnumber', 'partnumber', 'partno', 'nobarang'])) || undefined,
+        'No. WO': str(pickVal(r, ['nowo', 'nomorwo', 'wo', 'workorder', 'noworkorder'])) || undefined,
+        HM_KM: str(pickVal(r, ['hmkm', 'hmkmunit', 'hm', 'km', 'hourmeter'])) || undefined,
+        Keterangan: str(pickVal(r, ['keterangan', 'ket', 'remark', 'remarks'])) || undefined
+      });
+      const sigK = (tgl, kode, qty, unit, mek) => `${toISODate(tgl)}|${str(kode).toLowerCase()}|${num(qty)}|${str(unit).toLowerCase()}|${str(mek).toLowerCase()}`;
       if (dataKeluar.length === 0) {
         stage = 'barang keluar';
-        const rows = keluarRows.filter((r) => r.Kode !== undefined).map((r) => clean({
-          'Doc.Date': toISODate(r['Doc.Date']), Unit: r.Unit !== undefined ? String(r.Unit) : '', Kode: String(r.Kode).trim(),
-          'Nama Barang': r['Nama Barang'] !== undefined ? String(r['Nama Barang']) : '', Mekanik: r.Mekanik !== undefined ? String(r.Mekanik) : '',
-          Qty: Number(r.Qty) || 0, Keterangan: r.Keterangan !== undefined ? String(r.Keterangan) : '',
-          createdAt: serverTimestamp(), createdBy: profile.username
+        const rows = keluarRows.filter((r) => r.Kode !== undefined).map((r) => ({
+          'Doc.Date': toISODate(r['Doc.Date']), Unit: str(r.Unit), Kode: str(r.Kode),
+          'Nomor Barang': '', 'Nama Barang': str(r['Nama Barang']), Mekanik: str(r.Mekanik), 'No. WO': '', HM_KM: '', Keterangan: '',
+          Qty: num(r.Qty), createdAt: serverTimestamp(), createdBy: profile.username, ...keluarFields(r)
         }));
         for (const part of chunk(rows, 400)) {
           const batch = writeBatch(db);
@@ -762,10 +1041,42 @@ export default function App() {
           await batch.commit(); keluarCount += part.length;
           setImportMsg(`Mengimpor barang keluar... ${keluarCount}/${rows.length}`);
         }
+      } else {
+        stage = 'melengkapi barang keluar';
+        const mp = new Map();
+        keluarRows.filter((r) => r.Kode !== undefined).forEach((r) => { const k = sigK(r['Doc.Date'], r.Kode, r.Qty, r.Unit, r.Mekanik); if (!mp.has(k)) mp.set(k, []); mp.get(k).push(keluarFields(r)); });
+        const ups = [];
+        dataKeluar.forEach((d) => {
+          const list = mp.get(sigK(d['Doc.Date'], d.Kode, d.Qty, d.Unit, d.Mekanik));
+          if (!list || !list.length) return;
+          const f = list.shift(); const upd = {};
+          Object.entries(f).forEach(([key, val]) => { const cur = d[key]; if (cur === undefined || cur === null || cur === '') upd[key] = val; });
+          if (Object.keys(upd).length) ups.push({ id: d.id, upd });
+        });
+        for (const part of chunk(ups, 400)) {
+          const batch = writeBatch(db);
+          part.forEach((x) => batch.update(doc(db, 'barangKeluar', x.id), x.upd));
+          await batch.commit(); fillK += part.length;
+          setImportMsg(`Melengkapi barang keluar... ${fillK}/${ups.length}`);
+        }
       }
-      setImportMsg(`Selesai. Master barang baru: ${newMat.length}, barang masuk: ${masukCount}, barang keluar: ${keluarCount}.`);
+
+      setImportMsg([
+        'Selesai.',
+        `• Master barang: baru ${newMat.length}, diperbarui ${filled}`,
+        `• Barang masuk: baru ${masukCount}, dilengkapi ${fillM}`,
+        `• Barang keluar: baru ${keluarCount}, dilengkapi ${fillK}`,
+        `Header terbaca → MATERIAL: ${hdrInfo(matRows)}`,
+        `Barang Masuk: ${hdrInfo(masukRows)}`,
+        `Barang Keluar: ${hdrInfo(keluarRows)}`
+      ].join('\n'));
       notify('Impor selesai.');
-    } catch (err) { console.error(err); const m = `Gagal impor tahap "${stage}": ${err.code || ''} ${err.message || ''}`; setImportMsg(m); notify(m, 'error'); }
+    } catch (err) {
+      console.error(err);
+      let m = `Gagal impor tahap "${stage}": ${err.code || ''} ${err.message || ''}`;
+      if (err.code === 'resource-exhausted') m += '\nKuota tulis harian Firebase habis. Data yang sudah tersimpan aman; ulangi impor setelah kuota reset (sekitar pukul 15.00 WIB).';
+      setImportMsg(m); notify(m, 'error');
+    }
     setImporting(false);
   };
 
@@ -816,7 +1127,7 @@ export default function App() {
     Object.entries(sheets).forEach(([name, rows]) => XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(rows.map(stripMeta)), name));
     XLSX.writeFile(wb, filename);
   };
-  const exportAll = () => downloadSheets('BACKLOG_LOGISTIK_REP_UPDATE.xlsx', { MATERIAL: dataMaterial, 'Barang Masuk': sortedMasuk, 'Barang Keluar': sortedKeluar });
+  const exportAll = () => downloadSheets('BACKLOG_LOGISTIK_REP_UPDATE.xlsx', { MATERIAL: dataMaterial, 'Barang Masuk': sortedMasuk.map(withAvail), 'Barang Keluar': sortedKeluar });
 
   /* ============================== STYLE ============================== */
   const card = darkMode ? 'bg-slate-800 border-slate-700' : 'bg-white border-slate-200';
@@ -854,18 +1165,18 @@ export default function App() {
   if (authLoading) {
     return <div className="min-h-screen flex items-center justify-center bg-slate-900 text-slate-300 text-sm animate-pulse">Memuat...</div>;
   }
-  if (!profile) return <LoginScreen onLogin={handleLogin} error={authError} busy={authBusy} />;
+  if (!profile) return <><style>{themeCss}</style><LoginScreen onLogin={handleLogin} error={authError} busy={authBusy} /></>;
 
   const menus = [
     { name: 'Dashboard', icon: LayoutDashboard },
     { name: 'Master Barang', icon: Box },
+    { name: 'Rekap Stok', icon: BarChart3 },
     { name: 'Stok Masuk', icon: ArrowDownToLine },
     { name: 'Stok Keluar', icon: ArrowUpFromLine },
     { name: 'Form & Cetak PO', icon: ShoppingCart },
     { name: 'Arsip Database PO', icon: History },
     { name: 'Stok Opname', icon: ClipboardList },
     { name: 'Kartu Stok', icon: BookOpen },
-    { name: 'Rekap Stok', icon: BarChart3 },
     { name: 'Laporan', icon: FileText },
     ...(isAdmin ? [{ name: 'Pengguna', icon: Users }] : []),
     { name: 'Pengaturan', icon: Settings },
@@ -876,7 +1187,11 @@ export default function App() {
   /* ============================== RENDER ============================== */
   return (
     <div className={`app-root flex h-screen font-sans ${darkMode ? 'bg-slate-900 text-white' : 'bg-slate-50 text-slate-800'}`}>
+      <style>{themeCss}</style>
+      <datalist id="satuan-list">{['Ea', 'Assy', 'Kit', 'Set', 'Pcs', 'Unit', 'Pair', 'Box', 'Pack', 'Ltr', 'Kg', 'Mtr', 'Roll', 'Drum', 'Can', 'Lot'].map((k) => <option key={k} value={k} />)}</datalist>
+      <datalist id="partunit-list">{partUnitOptions.map((k) => <option key={k} value={k} />)}</datalist>
       <style>{`
+        table thead th { text-align: center !important; vertical-align: middle; }
         .po-input { background: transparent; color: ${INK}; outline: none; width: 100%; }
         .po-input:focus { background: #fffbe6; }
         @page { size: A4 portrait; margin: 0; }
@@ -904,8 +1219,8 @@ export default function App() {
       )}
 
       {/* SIDEBAR */}
-      <div className={`no-print w-72 shrink-0 flex flex-col border-r ${darkMode ? 'bg-slate-950 border-slate-800 text-slate-300' : 'bg-slate-900 border-slate-800 text-slate-300'}`}>
-        <div className="p-4 border-b border-slate-800 flex items-center gap-3 bg-slate-950">
+      <div className="no-print w-72 shrink-0 flex flex-col border-r border-slate-800 text-slate-300" style={{ background: 'var(--side)' }}>
+        <div className="p-4 border-b border-slate-800 flex items-center gap-3" style={{ background: 'var(--side-dark)' }}>
           <div className="w-10 h-10 flex items-center justify-center">
             <img src="/logo_PT_REP_transparan.png" alt="Logo" className="w-full h-full object-contain" />
           </div>
@@ -959,8 +1274,8 @@ export default function App() {
             {canEdit ? (
               <>
                 <button onClick={openNewMaterial} className="bg-emerald-600 hover:bg-emerald-700 text-white px-3 py-1.5 text-xs font-semibold rounded-lg flex items-center gap-1"><Plus size={14} /> Produk Baru</button>
-                <button onClick={() => { setFormMasuk({ ...emptyMasuk, tanggal: todayISO() }); setShowModalMasuk(true); }} className="bg-blue-600 hover:bg-blue-700 text-white px-3 py-1.5 text-xs font-semibold rounded-lg flex items-center gap-1"><Barcode size={14} /> Stok Masuk</button>
-                <button onClick={() => { setFormKeluar({ ...emptyKeluar, tanggal: todayISO() }); setShowModalKeluar(true); }} className="bg-amber-600 hover:bg-amber-700 text-white px-3.5 py-1.5 text-xs font-semibold rounded-lg flex items-center gap-1"><Barcode size={14} /> Stok Keluar</button>
+                <button onClick={() => { setEditingMasukId(null); setFormMasuk({ ...emptyMasuk, tanggal: todayISO() }); setShowModalMasuk(true); }} className="bg-blue-600 hover:bg-blue-700 text-white px-3 py-1.5 text-xs font-semibold rounded-lg flex items-center gap-1"><Barcode size={14} /> Stok Masuk</button>
+                <button onClick={() => { setEditingKeluarId(null); setFormKeluar({ ...emptyKeluar, tanggal: todayISO() }); setShowModalKeluar(true); }} className="bg-amber-600 hover:bg-amber-700 text-white px-3.5 py-1.5 text-xs font-semibold rounded-lg flex items-center gap-1"><Barcode size={14} /> Stok Keluar</button>
               </>
             ) : (<span className="bg-slate-200 text-slate-500 px-3 py-1.5 rounded-lg text-xs font-medium border">👁️ Mode Viewer</span>)}
           </div>
@@ -997,28 +1312,49 @@ export default function App() {
                 </div>
               </div>
 
+              <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+                <div onClick={() => goTab('Rekap Stok')} className={`p-5 rounded-xl border shadow-sm flex items-center justify-between cursor-pointer hover:border-blue-400 ${card}`}>
+                  <div><p className="text-xs font-semibold text-slate-400 uppercase">Rekap Stok (Total Persediaan)</p><h3 className="text-2xl font-bold mt-1 text-blue-600">{dashRekap.stok} Unit</h3><p className="text-[11px] text-slate-400 mt-1">Masuk {dashRekap.masuk} • Keluar {dashRekap.keluar} • Habis {dashRekap.habis} item</p></div>
+                  <div className="p-3 bg-blue-50 text-blue-600 rounded-xl"><BarChart3 size={24} /></div>
+                </div>
+                <div onClick={() => goTab('Stok Opname')} className={`p-5 rounded-xl border shadow-sm flex items-center justify-between cursor-pointer hover:border-emerald-400 ${card}`}>
+                  <div><p className="text-xs font-semibold text-slate-400 uppercase">Stok Opname Terakhir</p><h3 className="text-2xl font-bold mt-1 text-emerald-600">{lastOpname ? fmtDate(lastOpname.tanggal) : 'Belum ada'}</h3><p className="text-[11px] text-slate-400 mt-1">{lastOpname ? `${(lastOpname.items || []).length} barang disesuaikan • total ${riwayatOpname.length}x opname` : 'Belum pernah opname'}</p></div>
+                  <div className="p-3 bg-emerald-50 text-emerald-600 rounded-xl"><ClipboardList size={24} /></div>
+                </div>
+                <div onClick={() => goTab('Arsip Database PO')} className={`p-5 rounded-xl border shadow-sm flex items-center justify-between cursor-pointer hover:border-yellow-500 ${card}`}>
+                  <div><p className="text-xs font-semibold text-slate-400 uppercase">PO Tersimpan (Arsip)</p><h3 className="text-2xl font-bold mt-1 text-amber-500">{riwayatPo.length} PO</h3><p className="text-[11px] text-slate-400 mt-1">{lastPo ? `PO terakhir: ${lastPo.noPo}` : 'Belum ada PO tersimpan'}</p></div>
+                  <div className="p-3 bg-amber-50 text-amber-600 rounded-xl"><History size={24} /></div>
+                </div>
+                <div onClick={() => goTab('Form & Cetak PO')} className={`p-5 rounded-xl border shadow-sm flex items-center justify-between cursor-pointer hover:border-rose-400 ${card}`}>
+                  <div><p className="text-xs font-semibold text-slate-400 uppercase">Nomor PO Berikutnya</p><h3 className="text-2xl font-bold mt-1 text-rose-600">{nextPoNo}</h3><p className="text-[11px] text-slate-400 mt-1">Klik untuk membuat Form & Cetak PO</p></div>
+                  <div className="p-3 bg-rose-50 text-rose-600 rounded-xl"><Printer size={24} /></div>
+                </div>
+              </div>
+
               <div className={`rounded-xl shadow-sm border overflow-x-auto ${card}`}>
                 <div className="p-4 border-b flex items-center justify-between bg-amber-50">
                   <h3 className="font-bold text-xs uppercase tracking-wider text-amber-700 flex items-center gap-2"><AlertTriangle size={16} /> Perhatian: Material Mencapai Stok Minimum & Wajib Segera Di-Order (PO)</h3>
                   <button onClick={() => goTab('Form & Cetak PO')} className="text-xs bg-yellow-500 text-slate-950 font-bold px-3 py-1 rounded-lg">Buka Form PO ➔</button>
                 </div>
-                <table className="w-full min-w-[860px] text-left text-sm">
-                  <thead className={`border-b font-semibold ${thead}`}>
-                    <tr><th className="p-3.5">KODE</th><th className="p-3.5">NAMA BARANG</th><th className="p-3.5">LOKASI RAK</th><th className="p-3.5 text-center">STOK SAAT INI</th><th className="p-3.5 text-center">BATAS MINIMUM</th><th className="p-3.5 text-center">STATUS</th></tr>
+                <table className="w-full min-w-[960px] text-left text-sm">
+                  <thead className={`border-b font-semibold leading-tight ${thead}`}>
+                    <tr><th className="p-3">KODE</th><th className="p-3">MATERIAL<br />NUMBER</th><th className="p-3">PART UNIT</th><th className="p-3">NAMA BARANG</th><th className="p-3">LOKASI<br />RAK</th><th className="p-3 text-center">STOK<br />SAAT INI</th><th className="p-3 text-center">BATAS<br />MINIMUM</th><th className="p-3 text-center">STATUS</th></tr>
                   </thead>
                   <tbody className={`divide-y ${divide}`}>
                     {poNeededItems.length === 0 ? (
-                      <tr><td colSpan="6" className="p-6 text-center text-slate-400">Semua stok barang di atas batas minimum.</td></tr>
+                      <tr><td colSpan="8" className="p-6 text-center text-slate-400">Semua stok barang di atas batas minimum.</td></tr>
                     ) : poNeededItems.slice(0, 10).map((item) => {
                       const qn = Number(item.Qty || 0);
                       return (
                         <tr key={item.id} className={hoverRow}>
-                          <td className="p-3.5 font-mono font-bold">{item.Kode || '-'}</td>
-                          <td className="p-3.5 font-semibold">{item['Nama Barang'] || '-'}</td>
-                          <td className="p-3.5"><span className="bg-yellow-100 text-yellow-800 px-2 py-0.5 rounded font-bold text-[10px]">{item.Lokasi || 'Rak A1'}</span></td>
-                          <td className="p-3.5 text-center font-bold text-rose-600 text-sm">{qn}</td>
-                          <td className="p-3.5 text-center font-bold text-blue-600">{item.MinQty ?? 5}</td>
-                          <td className="p-3.5 text-center">{qn === 0 ? <span className="bg-rose-100 text-rose-800 px-2 py-1 rounded font-bold text-[10px]">Habis</span> : <span className="bg-amber-100 text-amber-800 px-2 py-1 rounded font-bold text-[10px]">Di Bawah Min</span>}</td>
+                          <td className="p-3 text-center align-middle font-mono font-bold">{item.Kode || '-'}</td>
+                          <td className="p-3 text-center align-middle max-w-[9rem] break-words">{item['Nomor Barang'] || '-'}</td>
+                          <td className="p-3 text-center align-middle max-w-[8rem] break-words">{item['Part Unit'] || '-'}</td>
+                          <td className="p-3 text-left align-middle font-semibold max-w-[16rem] break-words">{item['Nama Barang'] || '-'}</td>
+                          <td className="p-3 text-center align-middle"><span className="bg-yellow-100 text-yellow-800 px-2 py-0.5 rounded font-bold text-[10px]">{item.Lokasi || 'Rak A1'}</span></td>
+                          <td className="p-3 text-center align-middle font-bold text-rose-600 text-sm">{qn}</td>
+                          <td className="p-3 text-center align-middle font-bold text-blue-600">{item.MinQty ?? 5}</td>
+                          <td className="p-3 text-center align-middle">{qn === 0 ? <span className="bg-rose-100 text-rose-800 px-2 py-1 rounded font-bold text-[10px]">Habis</span> : <span className="bg-amber-100 text-amber-800 px-2 py-1 rounded font-bold text-[10px]">Di Bawah Min</span>}</td>
                         </tr>
                       );
                     })}
@@ -1050,26 +1386,29 @@ export default function App() {
             <div className="space-y-4">
               {SearchBox({ placeholder: "Cari nama barang, kode barcode, part number, atau lokasi..." })}
               <div className={`rounded-xl shadow-sm border overflow-x-auto ${card}`}>
-                <table className="w-full min-w-[860px] text-left text-sm">
-                  <thead className={`border-b font-semibold ${thead}`}>
-                    <tr><th className="p-3.5">KODE / BARCODE</th><th className="p-3.5">NAMA BARANG</th><th className="p-3.5">PART NO.</th><th className="p-3.5">LOKASI</th><th className="p-3.5 text-center">MIN</th><th className="p-3.5 text-center">STOK</th><th className="p-3.5 text-center">STATUS PO</th>{canEdit && <th className="p-3.5 text-center">AKSI</th>}</tr>
+                <table className="w-full min-w-[1050px] text-left text-sm">
+                  <thead className={`border-b font-semibold leading-tight ${thead}`}>
+                    <tr><th className="p-3">KODE /<br />BARCODE</th><th className="p-3">NAMA BARANG</th><th className="p-3">MATERIAL<br />NUMBER</th><th className="p-3">PART UNIT</th><th className="p-3">BASE UNIT<br />OF MEASURE</th><th className="p-3 text-center">SATUAN</th><th className="p-3">LOKASI</th><th className="p-3 text-center">MIN</th><th className="p-3 text-center">STOK</th><th className="p-3 text-center">STATUS<br />PO</th>{canEdit && <th className="p-3 text-center">AKSI</th>}</tr>
                   </thead>
                   <tbody className={`divide-y ${divide}`}>
                     {filteredMaterial.length === 0 ? (
-                      <tr><td colSpan="8" className="p-8 text-center text-slate-400">Tidak ada data ditemukan.</td></tr>
+                      <tr><td colSpan="11" className="p-8 text-center text-slate-400">Tidak ada data ditemukan.</td></tr>
                     ) : paged(filteredMaterial).map((item) => {
                       const qn = Number(item.Qty || 0); const minQ = Number(item.MinQty ?? 5);
                       return (
                         <tr key={item.id} className={hoverRow}>
-                          <td className="p-3.5 font-mono font-bold text-blue-600">{item.Kode || '-'}</td>
-                          <td className="p-3.5 font-semibold">{item['Nama Barang'] || '-'}</td>
-                          <td className="p-3.5">{item['Nomor Barang'] ?? '-'}</td>
-                          <td className="p-3.5"><span className="bg-slate-100 text-slate-800 px-2 py-0.5 rounded font-bold text-[10px]">📍 {item.Lokasi || 'Rak A1'}</span></td>
-                          <td className="p-3.5 text-center font-bold">{minQ}</td>
-                          <td className="p-3.5 text-center font-bold text-emerald-600 text-sm">{qn}</td>
-                          <td className="p-3.5 text-center">{qn <= minQ ? <span className="bg-rose-100 text-rose-800 px-2.5 py-1 rounded-full font-bold text-[10px]">⚠️ Perlu Order PO</span> : <span className="bg-emerald-100 text-emerald-800 px-2.5 py-1 rounded-full font-bold text-[10px]">Aman</span>}</td>
+                          <td className="p-3 text-center align-middle font-mono font-bold text-blue-600">{item.Kode || '-'}</td>
+                          <td className="p-3 text-left align-middle font-semibold max-w-[15rem] break-words">{item['Nama Barang'] || '-'}</td>
+                          <td className="p-3 text-center align-middle max-w-[9rem] break-words">{item['Nomor Barang'] ?? '-'}</td>
+                          <td className="p-3 text-center align-middle font-semibold">{item['Part Unit'] || '-'}</td>
+                          <td className="p-3 text-left align-middle max-w-[11rem] break-words">{item['Base Unit of Measure'] || '-'}</td>
+                          <td className="p-3 text-center align-middle font-semibold">{item.Satuan || '-'}</td>
+                          <td className="p-3 text-center align-middle"><span className="bg-slate-100 text-slate-800 px-2 py-0.5 rounded font-bold text-[10px]">📍 {item.Lokasi || 'Rak A1'}</span></td>
+                          <td className="p-3 text-center align-middle font-bold">{minQ}</td>
+                          <td className="p-3 text-center align-middle font-bold text-emerald-600 text-sm">{qn}</td>
+                          <td className="p-3 text-center align-middle">{qn <= minQ ? <span className="bg-rose-100 text-rose-800 px-2.5 py-1 rounded-full font-bold text-[10px]">⚠️ Perlu Order PO</span> : <span className="bg-emerald-100 text-emerald-800 px-2.5 py-1 rounded-full font-bold text-[10px]">Aman</span>}</td>
                           {canEdit && (
-                            <td className="p-3.5 text-center whitespace-nowrap">
+                            <td className="p-3 text-center whitespace-nowrap">
                               <button onClick={() => openEditMaterial(item)} title="Edit" className="p-1.5 text-blue-500 hover:bg-blue-50 rounded"><Pencil size={14} /></button>
                               {isAdmin && <button onClick={() => handleDeleteMaterial(item)} title="Hapus" className="p-1.5 text-rose-500 hover:bg-rose-50 rounded"><Trash2 size={14} /></button>}
                             </td>
@@ -1088,21 +1427,46 @@ export default function App() {
           {activeTab === 'Stok Masuk' && (
             <div className="space-y-4">
               {PeriodFilter()}
-              {SearchBox({ placeholder: "Cari kode, deskripsi, unit, atau No. PO..." })}
+              {SearchBox({ placeholder: "Cari kode, deskripsi, unit, No. PO, atau surat jalan..." })}
               <div className={`rounded-xl shadow-sm border overflow-x-auto ${card}`}>
-                <table className="w-full min-w-[860px] text-left text-sm">
-                  <thead className={`border-b font-semibold ${thead}`}>
-                    <tr><th className="p-3.5">TANGGAL</th><th className="p-3.5">UNIT</th><th className="p-3.5">KODE</th><th className="p-3.5">DESKRIPSI</th><th className="p-3.5">NO. PO</th><th className="p-3.5">QTY</th>{isAdmin && <th className="p-3.5 text-center">AKSI</th>}</tr>
+                <table className="w-full min-w-[1350px] text-left text-sm">
+                  <thead className={`border-b font-semibold leading-tight ${thead}`}>
+                    <tr>
+                      <th className="p-3">TANGGAL</th><th className="p-3">UNIT</th><th className="p-3">KODE</th>
+                      <th className="p-3">MATERIAL<br />NUMBER</th><th className="p-3">DESKRIPSI</th><th className="p-3">MERK</th>
+                      <th className="p-3 whitespace-nowrap">NO P.O</th><th className="p-3 whitespace-nowrap">NO SURAT JALAN</th><th className="p-3">QTY</th>
+                      <th className="p-3 text-center">KEKURANGAN<br />SUPPLY</th><th className="p-3 text-center">AVAILABILITY</th>
+                      <th className="p-3">KETERANGAN</th>{canEdit && <th className="p-3 text-center">AKSI</th>}
+                    </tr>
                   </thead>
                   <tbody className={`divide-y ${divide}`}>
-                    {filteredMasuk.length === 0 ? <tr><td colSpan="7" className="p-8 text-center text-slate-400">Tidak ada transaksi.</td></tr> : paged(filteredMasuk).map((item) => (
-                      <tr key={item.id} className={hoverRow}>
-                        <td className="p-3.5 whitespace-nowrap">{fmtDate(item.Tanggal)}</td><td className="p-3.5">{item.Unit}</td>
-                        <td className="p-3.5 font-mono">{item.Kode}</td><td className="p-3.5">{item.Description}</td><td className="p-3.5">{item['No. PO']}</td>
-                        <td className="p-3.5 font-bold text-emerald-600">+{item.Qty} <span className="text-slate-400 font-normal">{item.Satuan || item['Qty.1'] || ''}</span></td>
-                        {isAdmin && <td className="p-3.5 text-center"><button onClick={() => handleDeleteTrx('masuk', item)} className="p-1.5 text-rose-500 hover:bg-rose-50 rounded"><Trash2 size={14} /></button></td>}
-                      </tr>
-                    ))}
+                    {filteredMasuk.length === 0 ? <tr><td colSpan="13" className="p-8 text-center text-slate-400">Tidak ada transaksi.</td></tr> : paged(filteredMasuk).map((item) => {
+                      const av = availPct(item.Qty, item['Kekurangan Supply']);
+                      const kk = item['Kekurangan Supply'];
+                      const matNo = item['Material Number'] || materialByKode.get(String(item.Kode || '').toLowerCase())?.['Nomor Barang'] || '';
+                      return (
+                        <tr key={item.id} className={hoverRow}>
+                          <td className="p-3 text-center align-middle whitespace-nowrap">{fmtDate(item.Tanggal)}</td>
+                          <td className="p-3 text-center align-middle">{item.Unit}</td>
+                          <td className="p-3 text-center align-middle font-mono">{item.Kode}</td>
+                          <td className="p-3 text-center align-middle max-w-[9rem] break-words">{matNo}</td>
+                          <td className="p-3 text-left align-middle max-w-[16rem] break-words">{item.Description}</td>
+                          <td className="p-3 text-center align-middle max-w-[8rem] break-words">{item.Merk}</td>
+                          <td className="p-3 text-center align-middle max-w-[8rem] break-words">{item['No. PO']}</td>
+                          <td className="p-3 text-center align-middle max-w-[8rem] break-words">{item['No. Surat Jalan']}</td>
+                          <td className="p-3 text-center align-middle font-bold text-emerald-600 whitespace-nowrap">+{item.Qty} <span className="text-slate-400 font-normal">{item.Satuan || item['Qty.1'] || ''}</span></td>
+                          <td className="p-3 text-center align-middle">{kk && Number(kk) !== 0 ? <span className="text-rose-600 font-bold">{kk}</span> : '-'}</td>
+                          <td className="p-3 text-center align-middle">{av === null ? '-' : <span className={`px-2 py-0.5 rounded-full font-bold text-[11px] ${av >= 100 ? 'bg-emerald-100 text-emerald-800' : av >= 50 ? 'bg-amber-100 text-amber-800' : 'bg-rose-100 text-rose-800'}`}>{fmtPct(av)}</span>}</td>
+                          <td className="p-3 text-left align-middle max-w-[12rem] break-words">{item.Keterangan}</td>
+                          {canEdit && (
+                            <td className="p-3 text-center align-middle whitespace-nowrap">
+                              <button onClick={() => openEditMasuk(item)} title="Edit" className="p-1.5 text-blue-500 hover:bg-blue-50 rounded"><Pencil size={14} /></button>
+                              {isAdmin && <button onClick={() => handleDeleteTrx('masuk', item)} title="Hapus" className="p-1.5 text-rose-500 hover:bg-rose-50 rounded"><Trash2 size={14} /></button>}
+                            </td>
+                          )}
+                        </tr>
+                      );
+                    })}
                   </tbody>
                 </table>
                 <Pager page={page} setPage={setPage} total={filteredMasuk.length} dark={darkMode} />
@@ -1116,19 +1480,39 @@ export default function App() {
               {PeriodFilter()}
               {SearchBox({ placeholder: "Cari kode, nama barang, unit, atau mekanik..." })}
               <div className={`rounded-xl shadow-sm border overflow-x-auto ${card}`}>
-                <table className="w-full min-w-[860px] text-left text-sm">
-                  <thead className={`border-b font-semibold ${thead}`}>
-                    <tr><th className="p-3.5">TANGGAL</th><th className="p-3.5">UNIT</th><th className="p-3.5">KODE</th><th className="p-3.5">NAMA BARANG</th><th className="p-3.5">MEKANIK</th><th className="p-3.5">KETERANGAN</th><th className="p-3.5">QTY</th>{isAdmin && <th className="p-3.5 text-center">AKSI</th>}</tr>
+                <table className="w-full min-w-[1200px] text-left text-sm">
+                  <thead className={`border-b font-semibold leading-tight ${thead}`}>
+                    <tr>
+                      <th className="p-3">TANGGAL</th><th className="p-3">UNIT</th><th className="p-3">KODE</th>
+                      <th className="p-3">MATERIAL<br />NUMBER</th><th className="p-3">NAMA BARANG</th><th className="p-3">MEKANIK</th>
+                      <th className="p-3">NO. WO</th><th className="p-3">HM/KM</th><th className="p-3">KETERANGAN</th><th className="p-3">QTY</th>
+                      {canEdit && <th className="p-3 text-center">AKSI</th>}
+                    </tr>
                   </thead>
                   <tbody className={`divide-y ${divide}`}>
-                    {filteredKeluar.length === 0 ? <tr><td colSpan="8" className="p-8 text-center text-slate-400">Tidak ada transaksi.</td></tr> : paged(filteredKeluar).map((item) => (
-                      <tr key={item.id} className={hoverRow}>
-                        <td className="p-3.5 whitespace-nowrap">{fmtDate(item['Doc.Date'])}</td><td className="p-3.5">{item.Unit}</td>
-                        <td className="p-3.5 font-mono">{item.Kode}</td><td className="p-3.5">{item['Nama Barang']}</td><td className="p-3.5">{item.Mekanik}</td><td className="p-3.5">{item.Keterangan}</td>
-                        <td className="p-3.5 font-bold text-rose-600">-{item.Qty}</td>
-                        {isAdmin && <td className="p-3.5 text-center"><button onClick={() => handleDeleteTrx('keluar', item)} className="p-1.5 text-rose-500 hover:bg-rose-50 rounded"><Trash2 size={14} /></button></td>}
-                      </tr>
-                    ))}
+                    {filteredKeluar.length === 0 ? <tr><td colSpan="11" className="p-8 text-center text-slate-400">Tidak ada transaksi.</td></tr> : paged(filteredKeluar).map((item) => {
+                      const noBrg = item['Nomor Barang'] || materialByKode.get(String(item.Kode || '').toLowerCase())?.['Nomor Barang'] || '';
+                      return (
+                        <tr key={item.id} className={hoverRow}>
+                          <td className="p-3 text-center align-middle whitespace-nowrap">{fmtDate(item['Doc.Date'])}</td>
+                          <td className="p-3 text-center align-middle">{item.Unit}</td>
+                          <td className="p-3 text-center align-middle font-mono">{item.Kode}</td>
+                          <td className="p-3 text-center align-middle max-w-[9rem] break-words">{noBrg}</td>
+                          <td className="p-3 text-left align-middle max-w-[16rem] break-words">{item['Nama Barang']}</td>
+                          <td className="p-3 text-left align-middle max-w-[8rem] break-words">{item.Mekanik}</td>
+                          <td className="p-3 text-center align-middle max-w-[8rem] break-words">{item['No. WO']}</td>
+                          <td className="p-3 text-center align-middle max-w-[7rem] break-words">{item.HM_KM}</td>
+                          <td className="p-3 text-left align-middle max-w-[12rem] break-words">{item.Keterangan}</td>
+                          <td className="p-3 text-center align-middle font-bold text-rose-600 whitespace-nowrap">-{item.Qty}</td>
+                          {canEdit && (
+                            <td className="p-3 text-center align-middle whitespace-nowrap">
+                              <button onClick={() => openEditKeluar(item)} title="Edit" className="p-1.5 text-blue-500 hover:bg-blue-50 rounded"><Pencil size={14} /></button>
+                              {isAdmin && <button onClick={() => handleDeleteTrx('keluar', item)} title="Hapus" className="p-1.5 text-rose-500 hover:bg-rose-50 rounded"><Trash2 size={14} /></button>}
+                            </td>
+                          )}
+                        </tr>
+                      );
+                    })}
                   </tbody>
                 </table>
                 <Pager page={page} setPage={setPage} total={filteredKeluar.length} dark={darkMode} />
@@ -1157,18 +1541,23 @@ export default function App() {
               <div id="po-sheet" className="bg-white border border-slate-300 shadow-md mx-auto" style={{ width: '210mm', minHeight: '148.5mm', padding: '8mm 10mm', boxSizing: 'border-box', color: INK, fontFamily: 'Arial, Helvetica, sans-serif' }}>
                 <div className="flex items-center gap-4">
                   <img src="/logo_PT_REP_transparan.png" alt="" className="w-12 h-12 object-contain" />
-                  <div>
+                  <div className="flex-1">
                     <div className="text-lg font-extrabold tracking-wide" style={{ fontFamily: 'Georgia, "Times New Roman", serif' }}>PT. RYAN EKA PRATAMA</div>
-                    <div className="text-xs font-bold" style={{ letterSpacing: '0.4em' }}>{PO_KANTOR}</div>
+                    <div className="flex items-baseline justify-between">
+                      <div className="text-xs font-bold" style={{ letterSpacing: '0.4em' }}>{PO_KANTOR}</div>
+                      <div className="flex items-baseline text-base font-bold" style={{ fontFamily: 'Arial, Helvetica, sans-serif', fontVariantNumeric: 'lining-nums tabular-nums' }}>
+                        <span style={{ whiteSpace: 'pre' }}>{'No.   '}</span>
+                        <span className="inline-grid border-b border-dotted">
+                          <span aria-hidden="true" style={{ gridArea: '1 / 1', visibility: 'hidden', whiteSpace: 'pre', lineHeight: 1.2 }}>{poHeader.noPo || '00000'}</span>
+                          <input className="po-input text-right font-bold" style={{ gridArea: '1 / 1', width: '100%', minWidth: 0, color: '#c0392b', fontFamily: 'Arial, Helvetica, sans-serif', fontVariantNumeric: 'lining-nums tabular-nums', lineHeight: 1.2 }} value={poHeader.noPo} onChange={(e) => setPoHeader({ ...poHeader, noPo: e.target.value })} />
+                        </span>
+                      </div>
+                    </div>
                   </div>
                 </div>
 
-                <div className="relative flex items-center justify-center mt-2 mb-2">
+                <div className="text-center mt-2 mb-2">
                   <div className="text-lg font-extrabold tracking-wide">PURCHASE ORDER</div>
-                  <div className="absolute right-0 flex items-center gap-2 text-base" style={{ fontFamily: 'Georgia, serif' }}>
-                    <span>No.</span>
-                    <input className="po-input font-bold text-red-600 w-36 border-b border-dotted" style={{ color: '#c0392b' }} value={poHeader.noPo} onChange={(e) => setPoHeader({ ...poHeader, noPo: e.target.value })} />
-                  </div>
                 </div>
 
                 <div className="space-y-0.5 text-xs font-semibold mb-2 max-w-md">
@@ -1256,11 +1645,11 @@ export default function App() {
                 <div><h3 className="font-bold text-sm">Stock Opname</h3><p className="text-xs text-slate-400">Isi hitungan fisik. Hanya barang yang selisih yang disesuaikan ({opnameChanges.length} barang berubah).</p></div>
                 {canEdit && <button onClick={saveOpname} disabled={saving || opnameChanges.length === 0} className="bg-emerald-600 disabled:opacity-50 text-white px-4 py-2 rounded-lg text-xs font-semibold shadow flex items-center gap-1.5"><Save size={14} /> Simpan Opname</button>}
               </div>
-              {SearchBox({ placeholder: "Cari kode, nama barang, atau lokasi..." })}
+              {SearchBox({ placeholder: "Cari kode, nama barang, material number, atau lokasi..." })}
               <div className={`rounded-xl shadow-sm border overflow-x-auto ${card}`}>
                 <table className="w-full min-w-[860px] text-left text-sm">
                   <thead className={`border-b font-semibold ${thead}`}>
-                    <tr><th className="p-3.5">KODE</th><th className="p-3.5">NAMA BARANG</th><th className="p-3.5">LOKASI</th><th className="p-3.5 text-center">SISTEM</th><th className="p-3.5 text-center">FISIK</th><th className="p-3.5 text-center">SELISIH</th></tr>
+                    <tr><th className="p-3.5 text-center">KODE</th><th className="p-3.5 text-center">NAMA BARANG</th><th className="p-3.5 text-center">MATERIAL<br />NUMBER</th><th className="p-3.5 text-center">LOKASI</th><th className="p-3.5 text-center">SISTEM</th><th className="p-3.5 text-center">FISIK</th><th className="p-3.5 text-center">SELISIH</th></tr>
                   </thead>
                   <tbody className={`divide-y ${divide}`}>
                     {paged(filteredMaterial).map((item) => {
@@ -1270,11 +1659,12 @@ export default function App() {
                       const diff = phys - sys;
                       return (
                         <tr key={item.id}>
-                          <td className="p-3.5 font-mono font-bold">{item.Kode}</td><td className="p-3.5">{item['Nama Barang']}</td>
-                          <td className="p-3.5 font-semibold text-blue-600">{item.Lokasi || 'Rak A1'}</td>
-                          <td className="p-3.5 text-center font-bold text-blue-600">{sys}</td>
-                          <td className="p-3.5 text-center"><input type="number" min="0" disabled={!canEdit} className="w-20 p-1 text-center border rounded font-bold bg-white text-slate-900" value={raw === undefined ? sys : raw} onChange={(e) => setPhysicalStocks({ ...physicalStocks, [item.id]: e.target.value })} /></td>
-                          <td className="p-3.5 text-center">{diff === 0 ? <span className="bg-emerald-100 text-emerald-800 px-2 py-0.5 rounded font-bold text-[10px]">Sesuai</span> : <span className="bg-rose-100 text-rose-800 px-2 py-0.5 rounded font-bold text-[10px]">{diff > 0 ? '+' : ''}{diff}</span>}</td>
+                          <td className="p-3.5 text-center align-middle font-mono font-bold">{item.Kode}</td><td className="p-3.5">{item['Nama Barang']}</td>
+                          <td className="p-3.5 text-center align-middle break-words">{item['Nomor Barang'] ?? '-'}</td>
+                          <td className="p-3.5 text-center align-middle font-semibold text-blue-600">{item.Lokasi || 'Rak A1'}</td>
+                          <td className="p-3.5 text-center align-middle font-bold text-blue-600">{sys}</td>
+                          <td className="p-3.5 text-center align-middle"><input type="number" min="0" disabled={!canEdit} className="w-20 p-1 text-center border rounded font-bold bg-white text-slate-900" value={raw === undefined ? sys : raw} onChange={(e) => setPhysicalStocks({ ...physicalStocks, [item.id]: e.target.value })} /></td>
+                          <td className="p-3.5 text-center align-middle">{diff === 0 ? <span className="bg-emerald-100 text-emerald-800 px-2 py-0.5 rounded font-bold text-[10px]">Sesuai</span> : <span className="bg-rose-100 text-rose-800 px-2 py-0.5 rounded font-bold text-[10px]">{diff > 0 ? '+' : ''}{diff}</span>}</td>
                         </tr>
                       );
                     })}
@@ -1323,22 +1713,24 @@ export default function App() {
           {/* ===================== REKAP STOK ===================== */}
           {activeTab === 'Rekap Stok' && (
             <div className="space-y-4">
-              {SearchBox({ placeholder: "Cari kode, nama barang, part number, atau lokasi..." })}
+              {SearchBox({ placeholder: "Cari kode, nama barang, material number, part unit, atau lokasi..." })}
               <div className={`rounded-xl shadow-sm border overflow-x-auto ${card}`}>
                 <div className="p-4 border-b flex justify-between items-center"><h3 className="font-bold text-sm">Rekap Persediaan</h3><button onClick={exportAll} className="bg-emerald-600 text-white px-3 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1.5"><Download size={14} /> Excel</button></div>
                 <table className="w-full min-w-[860px] text-left text-sm">
                   <thead className={`border-b font-semibold ${thead}`}>
-                    <tr><th className="p-3.5">KODE</th><th className="p-3.5">NAMA</th><th className="p-3.5">PART NO.</th><th className="p-3.5">LOKASI</th><th className="p-3.5 text-center">TOTAL MASUK</th><th className="p-3.5 text-center">TOTAL KELUAR</th><th className="p-3.5 text-center">STOK</th></tr>
+                    <tr><th className="p-3.5 text-center">KODE</th><th className="p-3.5 text-center">NAMA BARANG</th><th className="p-3.5 text-center">MATERIAL<br />NUMBER</th><th className="p-3.5 text-center">PART UNIT</th><th className="p-3.5 text-center">LOKASI</th><th className="p-3.5 text-center">TOTAL MASUK</th><th className="p-3.5 text-center">TOTAL KELUAR</th><th className="p-3.5 text-center">STOK</th></tr>
                   </thead>
                   <tbody className={`divide-y ${divide}`}>
                     {paged(filteredMaterial).map((item) => {
                       const t = totalsByKode.get(String(item.Kode || '').toLowerCase()) || { in: 0, out: 0 };
                       return (
                         <tr key={item.id} className={hoverRow}>
-                          <td className="p-3.5 font-mono">{item.Kode}</td><td className="p-3.5">{item['Nama Barang']}</td><td className="p-3.5">{item['Nomor Barang'] ?? '-'}</td>
-                          <td className="p-3.5 font-bold text-blue-600">{item.Lokasi || 'Rak A1'}</td>
-                          <td className="p-3.5 text-center text-emerald-600 font-semibold">{t.in}</td><td className="p-3.5 text-center text-rose-600 font-semibold">{t.out}</td>
-                          <td className="p-3.5 text-center font-bold text-emerald-600">{item.Qty}</td>
+                          <td className="p-3.5 text-center align-middle font-mono">{item.Kode}</td><td className="p-3.5">{item['Nama Barang']}</td>
+                          <td className="p-3.5 text-center align-middle break-words">{item['Nomor Barang'] ?? '-'}</td>
+                          <td className="p-3.5 text-center align-middle">{item['Part Unit'] || '-'}</td>
+                          <td className="p-3.5 text-center align-middle font-bold text-blue-600">{item.Lokasi || 'Rak A1'}</td>
+                          <td className="p-3.5 text-center align-middle text-emerald-600 font-semibold">{t.in}</td><td className="p-3.5 text-center align-middle text-rose-600 font-semibold">{t.out}</td>
+                          <td className="p-3.5 text-center align-middle font-bold text-emerald-600">{item.Qty}</td>
                         </tr>
                       );
                     })}
@@ -1356,7 +1748,7 @@ export default function App() {
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 {[
                   { t: 'Laporan Stok Seluruh Barang', d: `${dataMaterial.length} item`, f: () => downloadSheets('Laporan_Stok.xlsx', { MATERIAL: dataMaterial }) },
-                  { t: 'Laporan Barang Masuk (sesuai periode)', d: `${sortedMasuk.filter((r) => matchesPeriod(r.Tanggal)).length} transaksi`, f: () => downloadSheets('Laporan_Barang_Masuk.xlsx', { 'Barang Masuk': sortedMasuk.filter((r) => matchesPeriod(r.Tanggal)) }) },
+                  { t: 'Laporan Barang Masuk (sesuai periode)', d: `${sortedMasuk.filter((r) => matchesPeriod(r.Tanggal)).length} transaksi`, f: () => downloadSheets('Laporan_Barang_Masuk.xlsx', { 'Barang Masuk': sortedMasuk.filter((r) => matchesPeriod(r.Tanggal)).map(withAvail) }) },
                   { t: 'Laporan Barang Keluar (sesuai periode)', d: `${sortedKeluar.filter((r) => matchesPeriod(r['Doc.Date'])).length} transaksi`, f: () => downloadSheets('Laporan_Barang_Keluar.xlsx', { 'Barang Keluar': sortedKeluar.filter((r) => matchesPeriod(r['Doc.Date'])) }) },
                   { t: 'Daftar Barang Wajib Order (PO)', d: `${poNeededItems.length} item`, f: () => downloadSheets('Daftar_Wajib_Order.xlsx', { 'Wajib Order': poNeededItems }) },
                   { t: 'Cadangan Seluruh Data (Backup)', d: 'Material, masuk, keluar', f: exportAll },
@@ -1421,7 +1813,19 @@ export default function App() {
                       className={`px-4 py-2 rounded-lg text-xs font-semibold border ${fontSize === sz ? 'bg-yellow-500 border-yellow-500 text-slate-950' : 'bg-white border-slate-300 text-slate-700 hover:bg-slate-50'}`}>{label}</button>
                   ))}
                 </div>
-                <p className="text-xs text-slate-400">Pilihan disimpan di browser ini. Ukuran huruf tidak memengaruhi hasil cetak PO.</p>
+                <div className="flex flex-wrap items-start gap-3 pt-2">
+                  <span className="text-xs font-semibold w-28 pt-2">Tema Warna</span>
+                  <div className="flex flex-wrap gap-2 flex-1">
+                    {Object.entries(THEMES).map(([key, t]) => (
+                      <button key={key} type="button" onClick={() => setThemeKey(key)} title={t.name}
+                        className={`flex items-center gap-2 px-3 py-2 rounded-lg border text-xs font-semibold bg-white text-slate-700 ${themeKey === key ? 'ring-2 ring-offset-1 ring-slate-700 border-slate-700' : 'border-slate-300 hover:bg-slate-50'}`}>
+                        <span className="flex w-8 h-5 rounded overflow-hidden border border-slate-300"><span className="w-1/2" style={{ background: t.side }} /><span className="w-1/2" style={{ background: t.accent }} /></span>
+                        {t.name}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+                <p className="text-xs text-slate-400">Pilihan disimpan di browser ini. Ukuran huruf dan tema tidak memengaruhi hasil cetak PO.</p>
               </div>
 
               <form onSubmit={changePassword} className={`p-6 rounded-xl border shadow-sm space-y-3 ${card}`}>
@@ -1443,7 +1847,7 @@ export default function App() {
                     </label>
                     <button disabled={importing} onClick={importFromPublic} className="px-3 py-2 rounded-lg text-xs font-semibold border border-slate-300 bg-white text-slate-700 disabled:opacity-50">Impor dari file bawaan (public)</button>
                   </div>
-                  {importMsg && <p className="text-xs font-semibold text-blue-600">{importMsg}</p>}
+                  {importMsg && <p className="text-xs font-semibold text-blue-600 whitespace-pre-line break-words">{importMsg}</p>}
                 </div>
               )}
 
@@ -1452,7 +1856,7 @@ export default function App() {
                   <h3 className="font-bold text-sm border-b pb-2 flex items-center gap-2"><ClipboardList size={16} /> Hitung Ulang Stok dari Transaksi</h3>
                   <p className="text-xs text-slate-400">Mengisi stok setiap barang = total barang masuk − total barang keluar yang tercatat. Gunakan bila stok hasil impor Excel tampil 0. Stok yang sudah ada akan diganti.</p>
                   <button disabled={importing} onClick={recalcStock} className="px-3 py-2 rounded-lg text-xs font-semibold bg-amber-500 text-slate-950 disabled:opacity-50">Hitung Ulang Stok</button>
-                  {importMsg && <p className="text-xs font-semibold text-blue-600">{importMsg}</p>}
+                  {importMsg && <p className="text-xs font-semibold text-blue-600 whitespace-pre-line break-words">{importMsg}</p>}
                 </div>
               )}
             </div>
@@ -1463,76 +1867,99 @@ export default function App() {
 
       {/* ===================== MODAL: PRODUK ===================== */}
       {showModalMaterial && (
-        <Modal dark={darkMode} title={editingMaterialId ? 'Edit Data Barang' : 'Tambah Produk Baru & Stok Minimum'} onClose={() => setShowModalMaterial(false)}>
-          <form onSubmit={handleSaveMaterial} className="space-y-3 text-xs">
-            <div><label className="block font-semibold mb-1">Kode / Barcode Barang</label><input type="text" required readOnly={!!editingMaterialId} className={`${inputClass} ${editingMaterialId ? 'bg-slate-100' : ''}`} value={formMaterial.kode} onChange={(e) => setFormMaterial({ ...formMaterial, kode: e.target.value })} onKeyDown={preventEnterSubmit} autoFocus={!editingMaterialId} placeholder="Scan atau ketik kode barcode..." /></div>
-            <div><label className="block font-semibold mb-1">Nama Barang</label><input type="text" required className={inputClass} value={formMaterial.nama} onChange={(e) => setFormMaterial({ ...formMaterial, nama: e.target.value })} placeholder="FILTER OLI CAT" /></div>
-            <div><label className="block font-semibold mb-1">Nomor Part</label><input type="text" className={inputClass} value={formMaterial.nomor} onChange={(e) => setFormMaterial({ ...formMaterial, nomor: e.target.value })} placeholder="1R-1808" /></div>
+        <Modal dark={darkMode} wide title={editingMaterialId ? 'Edit Data Barang' : 'Tambah Produk Baru & Stok Minimum'} onClose={() => setShowModalMaterial(false)}>
+          <form onSubmit={handleSaveMaterial} onKeyDown={enterNext} className="space-y-3 text-xs">
+            <p className="text-[11px] text-slate-400">Tekan <b>Enter</b> untuk pindah kolom. Enter di kolom terakhir = simpan.</p>
+            <Field label="Kode / Barcode Barang"><input id="fm-kode" type="text" required readOnly={!!editingMaterialId} autoFocus={!editingMaterialId} className={`${inputClass} ${editingMaterialId ? 'bg-slate-100' : ''}`} value={formMaterial.kode} onChange={(e) => setFormMaterial({ ...formMaterial, kode: e.target.value })} placeholder="Scan atau ketik kode barcode..." /></Field>
+            <Field label="Nama Barang"><input type="text" required className={inputClass} value={formMaterial.nama} onChange={(e) => setFormMaterial({ ...formMaterial, nama: e.target.value })} placeholder="WIPER BLADE" /></Field>
             <div className="grid grid-cols-2 gap-2">
-              <div><label className="block font-semibold mb-1">Lokasi Rak / Yard</label><input type="text" required className={inputClass} value={formMaterial.lokasi} onChange={(e) => setFormMaterial({ ...formMaterial, lokasi: e.target.value })} /></div>
-              <div><label className="block font-semibold mb-1">Batas Stok Minimum</label><input type="number" min="0" required className={inputClass} value={formMaterial.minQty} onChange={(e) => setFormMaterial({ ...formMaterial, minQty: e.target.value })} /></div>
+              <Field label="Material Number"><input type="text" className={inputClass} value={formMaterial.nomor} onChange={(e) => setFormMaterial({ ...formMaterial, nomor: e.target.value })} placeholder="20Y-54-39450" /></Field>
+              <Field label="Part Unit"><input type="text" list="partunit-list" className={inputClass} value={formMaterial.partUnit} onChange={(e) => setFormMaterial({ ...formMaterial, partUnit: e.target.value })} placeholder="Volvo / SCANIA / PC.300" /></Field>
             </div>
             <div className="grid grid-cols-2 gap-2">
-              <div><label className="block font-semibold mb-1">Part Unit</label><input type="text" className={inputClass} value={formMaterial.unit} onChange={(e) => setFormMaterial({ ...formMaterial, unit: e.target.value })} /></div>
-              <div><label className="block font-semibold mb-1">{editingMaterialId ? 'Stok Saat Ini' : 'Qty Awal'}</label><input type="number" min="0" required readOnly={!!editingMaterialId} className={`${inputClass} ${editingMaterialId ? 'bg-slate-100' : ''}`} value={formMaterial.qty} onChange={(e) => setFormMaterial({ ...formMaterial, qty: e.target.value })} /></div>
+              <Field label="Base Unit of Measure"><input type="text" className={inputClass} value={formMaterial.baseUnit} onChange={(e) => setFormMaterial({ ...formMaterial, baseUnit: e.target.value })} placeholder="Bolt roda belakang" /></Field>
+              <Field label="Satuan (Ea, Assy, Kit, Set)"><input type="text" list="satuan-list" className={inputClass} value={formMaterial.satuan} onChange={(e) => setFormMaterial({ ...formMaterial, satuan: e.target.value })} placeholder="Ea" /></Field>
+            </div>
+            <div className="grid grid-cols-3 gap-2">
+              <Field label="Lokasi Rak / Yard"><input type="text" required className={inputClass} value={formMaterial.lokasi} onChange={(e) => setFormMaterial({ ...formMaterial, lokasi: e.target.value })} /></Field>
+              <Field label="Stok Minimum"><input type="number" min="0" required className={inputClass} value={formMaterial.minQty} onChange={(e) => setFormMaterial({ ...formMaterial, minQty: e.target.value })} /></Field>
+              <Field label={editingMaterialId ? 'Stok Saat Ini' : 'Qty Awal'}><input type="number" min="0" required readOnly={!!editingMaterialId} className={`${inputClass} ${editingMaterialId ? 'bg-slate-100' : ''}`} value={formMaterial.qty} onChange={(e) => setFormMaterial({ ...formMaterial, qty: e.target.value })} /></Field>
             </div>
             {editingMaterialId && <p className="text-[11px] text-slate-400">Stok diubah lewat Stok Masuk, Stok Keluar, atau Stok Opname agar riwayat tetap akurat.</p>}
-            <div className="flex justify-end gap-2 mt-4 pt-2 border-t"><button type="button" onClick={() => setShowModalMaterial(false)} className="px-4 py-2 border rounded-lg">Batal</button><button disabled={saving} className="px-4 py-2 bg-emerald-600 disabled:opacity-60 text-white font-semibold rounded-lg">{saving ? 'Menyimpan...' : 'Simpan'}</button></div>
+            <div className="flex justify-end gap-2 mt-4 pt-2 border-t"><button type="button" onClick={() => setShowModalMaterial(false)} className="px-4 py-2 border rounded-lg">Tutup</button><button disabled={saving} className="px-4 py-2 bg-emerald-600 disabled:opacity-60 text-white font-semibold rounded-lg">{saving ? 'Menyimpan...' : editingMaterialId ? 'Simpan' : 'Simpan & Lanjut'}</button></div>
           </form>
         </Modal>
       )}
 
       {/* ===================== MODAL: STOK MASUK ===================== */}
       {showModalMasuk && (
-        <Modal dark={darkMode} title="Scan / Input Stok Masuk" icon={<Barcode size={18} className="text-blue-500" />} onClose={() => setShowModalMasuk(false)}>
-          <form onSubmit={handleAddMasuk} className="space-y-3 text-xs">
+        <Modal dark={darkMode} wide title={editingMasukId ? 'Edit Stok Masuk' : 'Scan / Input Stok Masuk'} icon={<Barcode size={18} className="text-blue-500" />} onClose={closeModalMasuk}>
+          <form onSubmit={handleAddMasuk} onKeyDown={enterNext} className="space-y-3 text-xs">
+            <p className="text-[11px] text-slate-400">Tekan <b>Enter</b> untuk pindah kolom. Enter di kolom terakhir = simpan, lalu form siap untuk barang berikutnya. Urutan kolom sama dengan tabel Stok Masuk.</p>
             <div>
               <label className="block font-semibold mb-1 text-blue-600">Scan Barcode / Ketik Kode Barang:</label>
-              <input type="text" autoFocus required value={formMasuk.kode} onChange={(e) => lookupMasuk(e.target.value)} onKeyDown={preventEnterSubmit}
+              <input id="fi-kode" type="text" autoFocus required value={formMasuk.kode} onChange={(e) => lookupMasuk(e.target.value)}
                 className="w-full p-2.5 border-2 border-blue-500 rounded-lg bg-blue-50 text-slate-900 font-bold placeholder-blue-300 focus:outline-none" placeholder="Arahkan scanner ke barcode atau ketik kode..." />
               {formMasuk.kode && (materialByKode.get(formMasuk.kode.trim().toLowerCase())
                 ? <p className="mt-1 text-emerald-600 font-semibold">✔ Ditemukan. Stok saat ini: {materialByKode.get(formMasuk.kode.trim().toLowerCase()).Qty}</p>
                 : <p className="mt-1 text-rose-500 font-semibold">Kode belum ada di Master Barang.</p>)}
             </div>
-            <div className="grid grid-cols-2 gap-2">
-              <div><label className="block font-semibold mb-1">Tanggal</label><input type="date" required className={inputClass} value={formMasuk.tanggal} onChange={(e) => setFormMasuk({ ...formMasuk, tanggal: e.target.value })} /></div>
-              <div><label className="block font-semibold mb-1">Unit</label><input type="text" className={inputClass} value={formMasuk.unit} onChange={(e) => setFormMasuk({ ...formMasuk, unit: e.target.value })} placeholder="REP 110" /></div>
-            </div>
-            <div><label className="block font-semibold mb-1">Deskripsi</label><input type="text" required className={inputClass} value={formMasuk.description} onChange={(e) => setFormMasuk({ ...formMasuk, description: e.target.value })} /></div>
-            <div><label className="block font-semibold mb-1">Merk / Part No.</label><input type="text" className={inputClass} value={formMasuk.merk} onChange={(e) => setFormMasuk({ ...formMasuk, merk: e.target.value })} /></div>
             <div className="grid grid-cols-3 gap-2">
-              <div><label className="block font-semibold mb-1">Qty</label><input type="number" min="1" required className={inputClass} value={formMasuk.qty} onChange={(e) => setFormMasuk({ ...formMasuk, qty: e.target.value })} /></div>
-              <div><label className="block font-semibold mb-1">Satuan</label><input type="text" required className={inputClass} value={formMasuk.satuan} onChange={(e) => setFormMasuk({ ...formMasuk, satuan: e.target.value })} /></div>
-              <div><label className="block font-semibold mb-1">No. PO</label><input type="text" className={inputClass} value={formMasuk.noPo} onChange={(e) => setFormMasuk({ ...formMasuk, noPo: e.target.value })} /></div>
+              <Field label="Tanggal"><input type="date" required className={inputClass} value={formMasuk.tanggal} onChange={(e) => setFormMasuk({ ...formMasuk, tanggal: e.target.value })} /></Field>
+              <Field label="Unit"><input type="text" className={inputClass} value={formMasuk.unit} onChange={(e) => setFormMasuk({ ...formMasuk, unit: e.target.value })} placeholder="REP 110" /></Field>
+              <Field label="Material Number (otomatis)"><input type="text" className={inputClass} value={formMasuk.materialNumber} onChange={(e) => setFormMasuk({ ...formMasuk, materialNumber: e.target.value })} placeholder="Terisi setelah kode diinput" /></Field>
             </div>
-            <div className="flex justify-end gap-2 mt-4 pt-2 border-t"><button type="button" onClick={() => setShowModalMasuk(false)} className="px-4 py-2 border rounded-lg">Batal</button><button disabled={saving} className="px-4 py-2 bg-blue-600 disabled:opacity-60 text-white font-semibold rounded-lg">{saving ? 'Menyimpan...' : 'Simpan Stok Masuk'}</button></div>
+            <div className="grid grid-cols-2 gap-2">
+              <Field label="Deskripsi"><input type="text" required className={inputClass} value={formMasuk.description} onChange={(e) => setFormMasuk({ ...formMasuk, description: e.target.value })} /></Field>
+              <Field label="Merk"><input type="text" className={inputClass} value={formMasuk.merk} onChange={(e) => setFormMasuk({ ...formMasuk, merk: e.target.value })} placeholder="Volvo / SCANIA / Komatsu" /></Field>
+            </div>
+            <div className="grid grid-cols-2 gap-2">
+              <Field label="Nomor PO"><input type="text" className={inputClass} value={formMasuk.noPo} onChange={(e) => setFormMasuk({ ...formMasuk, noPo: e.target.value })} /></Field>
+              <Field label="Nomor Surat Jalan"><input type="text" className={inputClass} value={formMasuk.suratJalan} onChange={(e) => setFormMasuk({ ...formMasuk, suratJalan: e.target.value })} /></Field>
+            </div>
+            <div className="grid grid-cols-3 gap-2">
+              <Field label="Qty"><input type="number" min="1" required className={inputClass} value={formMasuk.qty} onChange={(e) => setFormMasuk({ ...formMasuk, qty: e.target.value })} /></Field>
+              <Field label="Satuan"><input type="text" list="satuan-list" required className={inputClass} value={formMasuk.satuan} onChange={(e) => setFormMasuk({ ...formMasuk, satuan: e.target.value })} /></Field>
+              <Field label="Kekurangan Supply"><input type="number" min="0" className={inputClass} value={formMasuk.kekurangan} onChange={(e) => setFormMasuk({ ...formMasuk, kekurangan: e.target.value })} placeholder="0" /></Field>
+            </div>
+            <div className="grid grid-cols-3 gap-2">
+              <Field label="Availability (otomatis)"><input type="text" readOnly tabIndex={-1} className={`${inputClass} bg-slate-100 font-bold`} value={fmtPct(availPct(formMasuk.qty, formMasuk.kekurangan))} /></Field>
+              <Field label="Keterangan" className="col-span-2"><input type="text" className={inputClass} value={formMasuk.keterangan} onChange={(e) => setFormMasuk({ ...formMasuk, keterangan: e.target.value })} /></Field>
+            </div>
+            <div className="flex justify-end gap-2 mt-4 pt-2 border-t"><button type="button" onClick={closeModalMasuk} className="px-4 py-2 border rounded-lg">Tutup</button><button disabled={saving} className="px-4 py-2 bg-blue-600 disabled:opacity-60 text-white font-semibold rounded-lg">{saving ? 'Menyimpan...' : editingMasukId ? 'Simpan Perubahan' : 'Simpan & Lanjut'}</button></div>
           </form>
         </Modal>
       )}
 
       {/* ===================== MODAL: STOK KELUAR ===================== */}
       {showModalKeluar && (
-        <Modal dark={darkMode} title="Scan / Input Stok Keluar" icon={<Barcode size={18} className="text-amber-500" />} onClose={() => setShowModalKeluar(false)}>
-          <form onSubmit={handleAddKeluar} className="space-y-3 text-xs">
+        <Modal dark={darkMode} wide title={editingKeluarId ? 'Edit Stok Keluar' : 'Scan / Input Stok Keluar'} icon={<Barcode size={18} className="text-amber-500" />} onClose={closeModalKeluar}>
+          <form onSubmit={handleAddKeluar} onKeyDown={enterNext} className="space-y-3 text-xs">
+            <p className="text-[11px] text-slate-400">Tekan <b>Enter</b> untuk pindah kolom. Enter di kolom terakhir = simpan, lalu form siap untuk barang berikutnya. Urutan kolom sama dengan tabel Stok Keluar.</p>
             <div>
               <label className="block font-semibold mb-1 text-amber-600">Scan Barcode / Ketik Kode Barang:</label>
-              <input type="text" autoFocus required value={formKeluar.kode} onChange={(e) => lookupKeluar(e.target.value)} onKeyDown={preventEnterSubmit}
+              <input id="fk-kode" type="text" autoFocus required value={formKeluar.kode} onChange={(e) => lookupKeluar(e.target.value)}
                 className="w-full p-2.5 border-2 border-amber-500 rounded-lg bg-amber-50 text-slate-900 font-bold placeholder-amber-300 focus:outline-none" placeholder="Arahkan scanner ke barcode atau ketik kode..." />
               {formKeluar.kode && (materialByKode.get(formKeluar.kode.trim().toLowerCase())
                 ? <p className="mt-1 text-emerald-600 font-semibold">✔ Ditemukan. Stok tersedia: {materialByKode.get(formKeluar.kode.trim().toLowerCase()).Qty}</p>
                 : <p className="mt-1 text-rose-500 font-semibold">Kode belum ada di Master Barang.</p>)}
             </div>
-            <div className="grid grid-cols-2 gap-2">
-              <div><label className="block font-semibold mb-1">Tanggal</label><input type="date" required className={inputClass} value={formKeluar.tanggal} onChange={(e) => setFormKeluar({ ...formKeluar, tanggal: e.target.value })} /></div>
-              <div><label className="block font-semibold mb-1">Unit</label><input type="text" required className={inputClass} value={formKeluar.unit} onChange={(e) => setFormKeluar({ ...formKeluar, unit: e.target.value })} placeholder="REP 110" /></div>
+            <div className="grid grid-cols-3 gap-2">
+              <Field label="Tanggal"><input type="date" required className={inputClass} value={formKeluar.tanggal} onChange={(e) => setFormKeluar({ ...formKeluar, tanggal: e.target.value })} /></Field>
+              <Field label="Unit"><input type="text" required className={inputClass} value={formKeluar.unit} onChange={(e) => setFormKeluar({ ...formKeluar, unit: e.target.value })} placeholder="REP 110" /></Field>
+              <Field label="Material Number (otomatis)"><input type="text" readOnly tabIndex={-1} className={`${inputClass} bg-slate-100 font-bold`} value={formKeluar.nomorBarang} placeholder="Terisi setelah kode diinput" /></Field>
             </div>
-            <div><label className="block font-semibold mb-1">Nama Barang</label><input type="text" required className={inputClass} value={formKeluar.namaBarang} onChange={(e) => setFormKeluar({ ...formKeluar, namaBarang: e.target.value })} /></div>
-            <div><label className="block font-semibold mb-1">Mekanik</label><input type="text" className={inputClass} value={formKeluar.mekanik} onChange={(e) => setFormKeluar({ ...formKeluar, mekanik: e.target.value })} placeholder="Endang" /></div>
-            <div className="grid grid-cols-2 gap-2">
-              <div><label className="block font-semibold mb-1">Qty Keluar</label><input type="number" min="1" required className={inputClass} value={formKeluar.qty} onChange={(e) => setFormKeluar({ ...formKeluar, qty: e.target.value })} /></div>
-              <div><label className="block font-semibold mb-1">Keterangan</label><input type="text" className={inputClass} value={formKeluar.keterangan} onChange={(e) => setFormKeluar({ ...formKeluar, keterangan: e.target.value })} placeholder="Ganti / Rusak" /></div>
+            <Field label="Nama Barang"><input type="text" required className={inputClass} value={formKeluar.namaBarang} onChange={(e) => setFormKeluar({ ...formKeluar, namaBarang: e.target.value })} /></Field>
+            <div className="grid grid-cols-3 gap-2">
+              <Field label="Mekanik"><input type="text" className={inputClass} value={formKeluar.mekanik} onChange={(e) => setFormKeluar({ ...formKeluar, mekanik: e.target.value })} placeholder="Endang" /></Field>
+              <Field label="Nomor WO"><input type="text" className={inputClass} value={formKeluar.noWo} onChange={(e) => setFormKeluar({ ...formKeluar, noWo: e.target.value })} /></Field>
+              <Field label="HM/KM Unit"><input type="text" className={inputClass} value={formKeluar.hmKm} onChange={(e) => setFormKeluar({ ...formKeluar, hmKm: e.target.value })} /></Field>
             </div>
-            <div className="flex justify-end gap-2 mt-4 pt-2 border-t"><button type="button" onClick={() => setShowModalKeluar(false)} className="px-4 py-2 border rounded-lg">Batal</button><button disabled={saving} className="px-4 py-2 bg-amber-600 disabled:opacity-60 text-white font-semibold rounded-lg">{saving ? 'Menyimpan...' : 'Simpan Stok Keluar'}</button></div>
+            <div className="grid grid-cols-3 gap-2">
+              <Field label="Keterangan" className="col-span-2"><input type="text" className={inputClass} value={formKeluar.keterangan} onChange={(e) => setFormKeluar({ ...formKeluar, keterangan: e.target.value })} placeholder="Ganti / Rusak" /></Field>
+              <Field label="Qty Keluar"><input type="number" min="1" required className={inputClass} value={formKeluar.qty} onChange={(e) => setFormKeluar({ ...formKeluar, qty: e.target.value })} /></Field>
+            </div>
+            <div className="flex justify-end gap-2 mt-4 pt-2 border-t"><button type="button" onClick={closeModalKeluar} className="px-4 py-2 border rounded-lg">Tutup</button><button disabled={saving} className="px-4 py-2 bg-amber-600 disabled:opacity-60 text-white font-semibold rounded-lg">{saving ? 'Menyimpan...' : editingKeluarId ? 'Simpan Perubahan' : 'Simpan & Lanjut'}</button></div>
           </form>
         </Modal>
       )}
@@ -1540,7 +1967,7 @@ export default function App() {
       {/* ===================== MODAL: PENGGUNA ===================== */}
       {showModalUser && (
         <Modal dark={darkMode} title="Tambah Pengguna" onClose={() => setShowModalUser(false)}>
-          <form onSubmit={handleAddUser} className="space-y-3 text-xs">
+          <form onSubmit={handleAddUser} onKeyDown={enterNext} className="space-y-3 text-xs">
             <div><label className="block font-semibold mb-1">Nama Lengkap</label><input type="text" required className={inputClass} value={formUser.nama} onChange={(e) => setFormUser({ ...formUser, nama: e.target.value })} /></div>
             <div><label className="block font-semibold mb-1">Username (untuk login)</label><input type="text" required className={inputClass} value={formUser.username} onChange={(e) => setFormUser({ ...formUser, username: e.target.value })} placeholder="endang_mech" autoComplete="off" /></div>
             <div><label className="block font-semibold mb-1">Password Awal</label><input type="password" required minLength={6} className={inputClass} value={formUser.password} onChange={(e) => setFormUser({ ...formUser, password: e.target.value })} placeholder="Minimal 6 karakter" autoComplete="new-password" /></div>
