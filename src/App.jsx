@@ -201,7 +201,6 @@ export default function App() {
   const totalPageMasuk = Math.ceil(filteredMasuk.length / rowsPerPage);
   const totalPageKeluar = Math.ceil(filteredKeluar.length / rowsPerPage);
 
-  // KELAS INPUT: Background Putih & Teks Hitam Tegas
   const inputClass = "w-full p-2 border border-slate-300 rounded-lg bg-white text-slate-900 placeholder-slate-400 focus:outline-none focus:border-blue-500 font-medium";
   const selectClass = "px-3 py-2 text-sm border border-slate-300 rounded-lg bg-white text-slate-900 font-medium";
   const searchClass = "w-full pl-9 pr-4 py-2 text-sm border border-slate-300 rounded-lg bg-white text-slate-900 focus:outline-none focus:border-blue-500 font-medium";
@@ -440,41 +439,210 @@ export default function App() {
             </div>
           )}
 
+          {/* STOK OPNAME */}
+          {activeTab === 'Stok Opname' && (
+            <div className="space-y-4">
+              <div className={`p-4 rounded-xl border shadow-sm flex justify-between items-center ${darkMode ? 'bg-slate-800 border-slate-700' : 'bg-white border-slate-200'}`}>
+                <div>
+                  <h3 className="font-bold text-sm">Lembar Kerja Stock Opname Gudang Site Bontang</h3>
+                  <p className="text-xs text-slate-400">Masukkan jumlah fisik barang untuk memeriksa selisih stok.</p>
+                </div>
+                <button onClick={() => alert("Hasil Opname berhasil disimpan!")} className="bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-2 rounded-lg text-xs font-semibold shadow">
+                  Simpan Sesi Opname
+                </button>
+              </div>
+
+              <div className={`rounded-xl shadow-sm border overflow-hidden ${darkMode ? 'bg-slate-800 border-slate-700' : 'bg-white border-slate-200'}`}>
+                <table className="w-full text-left text-xs">
+                  <thead className={`border-b font-semibold ${darkMode ? 'bg-slate-900 text-slate-400 border-slate-700' : 'bg-slate-50 text-slate-600 border-slate-200'}`}>
+                    <tr>
+                      <th className="p-3.5">KODE</th>
+                      <th className="p-3.5">NAMA BARANG</th>
+                      <th className="p-3.5 text-center">STOK SISTEM</th>
+                      <th className="p-3.5 text-center">STOK FISIK (HITUNG)</th>
+                      <th className="p-3.5 text-center">SELISIH</th>
+                    </tr>
+                  </thead>
+                  <tbody className={`divide-y ${darkMode ? 'divide-slate-700' : 'divide-slate-100'}`}>
+                    {dataMaterial.slice(0, 30).map((item, index) => {
+                      const kode = item.Kode || index;
+                      const stokSistem = Number(item.Qty) || 0;
+                      const stokFisik = physicalStocks[kode] !== undefined ? Number(physicalStocks[kode]) : stokSistem;
+                      const selisih = stokFisik - stokSistem;
+
+                      return (
+                        <tr key={index}>
+                          <td className="p-3.5 font-mono font-bold">{item.Kode || '-'}</td>
+                          <td className="p-3.5 font-medium">{item['Nama Barang'] || '-'}</td>
+                          <td className="p-3.5 text-center font-bold text-blue-600">{stokSistem}</td>
+                          <td className="p-3.5 text-center">
+                            <input 
+                              type="number" 
+                              className="w-24 p-1 text-center border border-slate-300 rounded font-bold bg-white text-slate-900"
+                              value={physicalStocks[kode] !== undefined ? physicalStocks[kode] : stokSistem}
+                              onChange={(e) => setPhysicalStocks({...physicalStocks, [kode]: e.target.value})}
+                            />
+                          </td>
+                          <td className="p-3.5 text-center">
+                            {selisih === 0 ? <span className="bg-emerald-100 text-emerald-800 px-2 py-1 rounded font-bold text-[10px]">Sesuai (0)</span> : selisih > 0 ? <span className="bg-blue-100 text-blue-800 px-2 py-1 rounded font-bold text-[10px]">Lebih (+{selisih})</span> : <span className="bg-rose-100 text-rose-800 px-2 py-1 rounded font-bold text-[10px]">Kurang ({selisih})</span>}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+
+          {/* KARTU STOK */}
+          {activeTab === 'Kartu Stok' && (
+            <div className="space-y-4">
+              <div className={`p-4 rounded-xl border shadow-sm flex items-center gap-4 ${darkMode ? 'bg-slate-800 border-slate-700' : 'bg-white border-slate-200'}`}>
+                <span className="text-xs font-semibold">Pilih atau Cari Barang:</span>
+                <select value={selectedItemCode} onChange={(e) => setSelectedItemCode(e.target.value)} className={selectClass}>
+                  <option value="">-- Pilih Material Master Barang --</option>
+                  {dataMaterial.map((m, idx) => (<option key={idx} value={m.Kode}>{m.Kode} - {m['Nama Barang']}</option>))}
+                </select>
+              </div>
+
+              {selectedItemCode ? (
+                <div className={`p-5 rounded-xl border shadow-sm space-y-4 ${darkMode ? 'bg-slate-800 border-slate-700' : 'bg-white border-slate-200'}`}>
+                  <h3 className="font-bold text-sm border-b pb-2">Riwayat Kartu Stok: <span className="text-yellow-500">{selectedItemCode}</span></h3>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div className="border rounded-lg p-3">
+                      <h4 className="font-bold text-xs text-emerald-600 mb-2">Riwayat Masuk</h4>
+                      <div className="space-y-2 max-h-60 overflow-y-auto text-xs">
+                        {dataMasuk.filter(m => m.Kode === selectedItemCode).map((m, i) => (
+                          <div key={i} className="p-2 border rounded bg-white text-slate-900 flex justify-between">
+                            <span>{m.Description} (Tgl: {formatTanggalExcel(m.Tanggal)})</span>
+                            <span className="font-bold text-emerald-600">+{m.Qty}</span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                    <div className="border rounded-lg p-3">
+                      <h4 className="font-bold text-xs text-rose-600 mb-2">Riwayat Keluar</h4>
+                      <div className="space-y-2 max-h-60 overflow-y-auto text-xs">
+                        {dataKeluar.filter(k => k.Kode === selectedItemCode).map((k, i) => (
+                          <div key={i} className="p-2 border rounded bg-white text-slate-900 flex justify-between">
+                            <span>{k['Nama Barang']} (Mekanik: {k.Mekanik})</span>
+                            <span className="font-bold text-rose-600">-{k.Qty}</span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              ) : (
+                <div className={`p-12 text-center rounded-xl border ${darkMode ? 'bg-slate-800 border-slate-700' : 'bg-white border-slate-200'}`}>
+                  <p className="text-sm text-slate-400">Silakan pilih salah satu kode barang di atas.</p>
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* REKAP STOK */}
+          {activeTab === 'Rekap Stok' && (
+            <div className={`rounded-xl shadow-sm border overflow-hidden ${darkMode ? 'bg-slate-800 border-slate-700' : 'bg-white border-slate-200'}`}>
+              <div className="p-4 border-b flex justify-between items-center">
+                <h3 className="font-bold text-sm">Rekapitulasi Status Persediaan Gudang</h3>
+                <button onClick={exportToExcel} className="bg-emerald-600 hover:bg-emerald-700 text-white px-3 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1.5"><Download size={14}/> Unduh Excel</button>
+              </div>
+              <table className="w-full text-left text-xs">
+                <thead className={`border-b font-semibold ${darkMode ? 'bg-slate-900 text-slate-400 border-slate-700' : 'bg-slate-50 text-slate-600 border-slate-200'}`}>
+                  <tr><th className="p-3.5">KODE</th><th className="p-3.5">NAMA MATERIAL</th><th className="p-3.5 text-center">STOK TERSEDIA</th><th className="p-3.5 text-center">STATUS</th></tr>
+                </thead>
+                <tbody className={`divide-y ${darkMode ? 'divide-slate-700' : 'divide-slate-100'}`}>
+                  {dataMaterial.slice(0, 40).map((item, index) => {
+                    const qty = Number(item.Qty) || 0;
+                    return (
+                      <tr key={index}>
+                        <td className="p-3.5 font-mono font-semibold">{item.Kode || '-'}</td>
+                        <td className="p-3.5 font-medium">{item['Nama Barang'] || '-'}</td>
+                        <td className="p-3.5 text-center font-bold text-emerald-600">{qty}</td>
+                        <td className="p-3.5 text-center">
+                          {qty > 5 ? <span className="bg-emerald-100 text-emerald-800 px-2 py-1 rounded font-bold text-[10px]">Aman</span> : <span className="bg-rose-100 text-rose-800 px-2 py-1 rounded font-bold text-[10px]">Menipis</span>}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          )}
+
+          {/* LAPORAN */}
+          {activeTab === 'Laporan' && (
+            <div className="space-y-4">
+              <div className={`p-4 rounded-xl border shadow-sm flex justify-between items-center ${darkMode ? 'bg-slate-800 border-slate-700' : 'bg-white border-slate-200'}`}>
+                <h3 className="font-bold text-sm">Pusat Laporan Logistik</h3>
+                <button onClick={exportToExcel} className="bg-emerald-600 hover:bg-emerald-700 text-white px-3 py-2 rounded-lg text-xs font-semibold flex items-center gap-1.5"><Download size={14}/> Unduh Laporan Excel</button>
+              </div>
+            </div>
+          )}
+
+          {/* PENGGUNA */}
+          {activeTab === 'Pengguna' && (
+            <div className="space-y-4">
+              <div className={`p-4 rounded-xl border shadow-sm flex justify-between items-center ${darkMode ? 'bg-slate-800 border-slate-700' : 'bg-white border-slate-200'}`}>
+                <div>
+                  <h3 className="font-bold text-sm">Manajemen Pengguna</h3>
+                  <p className="text-xs text-slate-400">Daftar staf yang memiliki akses sistem.</p>
+                </div>
+                {currentUser.role === 'Admin' && (
+                  <button onClick={() => setShowModalUser(true)} className="bg-blue-600 hover:bg-blue-700 text-white px-3.5 py-2 rounded-lg text-xs font-semibold flex items-center gap-1.5"><UserPlus size={14}/> Tambah Pengguna</button>
+                )}
+              </div>
+              <div className={`rounded-xl shadow-sm border overflow-hidden ${darkMode ? 'bg-slate-800 border-slate-700' : 'bg-white border-slate-200'}`}>
+                <table className="w-full text-left text-xs">
+                  <thead className={`border-b font-semibold ${darkMode ? 'bg-slate-900 text-slate-400 border-slate-700' : 'bg-slate-50 text-slate-600 border-slate-200'}`}>
+                    <tr><th className="p-3.5">NAMA</th><th className="p-3.5">USERNAME</th><th className="p-3.5">ROLE</th><th className="p-3.5 text-center">AKSI</th></tr>
+                  </thead>
+                  <tbody className={`divide-y ${darkMode ? 'divide-slate-700' : 'divide-slate-100'}`}>
+                    {daftarPengguna.map((u) => (
+                      <tr key={u.id}>
+                        <td className="p-3.5 font-semibold">{u.nama}</td>
+                        <td className="p-3.5 font-mono">{u.username}</td>
+                        <td className="p-3.5"><span className="px-2 py-0.5 rounded font-semibold text-[10px] bg-purple-100 text-purple-800">{u.role}</span></td>
+                        <td className="p-3.5 text-center">
+                          {currentUser.role === 'Admin' && <button onClick={() => handleDeleteUser(u.id, u.role)} className="p-1 bg-rose-100 text-rose-700 rounded"><Trash2 size={14} /></button>}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+
+          {/* PENGATURAN */}
+          {activeTab === 'Pengaturan' && (
+            <div className={`p-6 rounded-xl border shadow-sm max-w-2xl space-y-4 ${darkMode ? 'bg-slate-800 border-slate-700' : 'bg-white border-slate-200'}`}>
+              <h3 className="font-bold text-sm border-b pb-2 flex items-center gap-2 text-yellow-500"><Sliders size={18}/> Pengaturan Sistem</h3>
+              <div className="space-y-2 text-xs">
+                <label className="block font-semibold">Nama Perusahaan</label>
+                <input type="text" disabled className={inputClass} value="PT. Ryan Eka Pratama" />
+                <label className="block font-semibold">Lokasi Site</label>
+                <input type="text" disabled className={inputClass} value="Site Bontang, Kalimantan Timur" />
+              </div>
+            </div>
+          )}
+
           {/* MODAL INPUT: PRODUK BARU */}
           {showModalMaterial && (
             <div className="fixed inset-0 bg-black bg-opacity-60 flex items-center justify-center z-50 p-4">
               <div className={`w-full max-w-lg p-6 rounded-xl shadow-2xl border ${darkMode ? 'bg-slate-800 border-slate-700 text-white' : 'bg-white border-slate-200 text-slate-800'}`}>
-                <div className="flex justify-between items-center mb-4 border-b pb-2">
-                  <h3 className="font-bold text-base">Tambah Produk / Master Barang Baru</h3>
-                  <button onClick={() => setShowModalMaterial(false)} className="text-slate-400 hover:text-red-500"><X size={20}/></button>
-                </div>
+                <div className="flex justify-between items-center mb-4 border-b pb-2"><h3 className="font-bold text-base">Tambah Produk Baru</h3><button onClick={() => setShowModalMaterial(false)}><X size={20}/></button></div>
                 <form onSubmit={handleAddMaterial} className="space-y-3 text-xs">
-                  <div>
-                    <label className="block font-semibold mb-1">Kode Barang</label>
-                    <input type="text" required className={inputClass} value={formMaterial.kode} onChange={e => setFormMaterial({...formMaterial, kode: e.target.value})} placeholder="U198" />
-                  </div>
-                  <div>
-                    <label className="block font-semibold mb-1">Nama Barang (Description)</label>
-                    <input type="text" required className={inputClass} value={formMaterial.nama} onChange={e => setFormMaterial({...formMaterial, nama: e.target.value})} placeholder="FILTER OLI CAT" />
-                  </div>
-                  <div>
-                    <label className="block font-semibold mb-1">Nomor Part / Barang</label>
-                    <input type="text" className={inputClass} value={formMaterial.nomor} onChange={e => setFormMaterial({...formMaterial, nomor: e.target.value})} placeholder="1R-1808" />
-                  </div>
+                  <div><label className="block font-semibold mb-1">Kode Barang</label><input type="text" required className={inputClass} value={formMaterial.kode} onChange={e => setFormMaterial({...formMaterial, kode: e.target.value})}/></div>
+                  <div><label className="block font-semibold mb-1">Nama Barang</label><input type="text" required className={inputClass} value={formMaterial.nama} onChange={e => setFormMaterial({...formMaterial, nama: e.target.value})}/></div>
+                  <div><label className="block font-semibold mb-1">Nomor Part</label><input type="text" className={inputClass} value={formMaterial.nomor} onChange={e => setFormMaterial({...formMaterial, nomor: e.target.value})}/></div>
                   <div className="grid grid-cols-2 gap-2">
-                    <div>
-                      <label className="block font-semibold mb-1">Part Unit</label>
-                      <input type="text" className={inputClass} value={formMaterial.unit} onChange={e => setFormMaterial({...formMaterial, unit: e.target.value})} placeholder="REP 110" />
-                    </div>
-                    <div>
-                      <label className="block font-semibold mb-1">Qty Awal</label>
-                      <input type="number" required className={inputClass} value={formMaterial.qty} onChange={e => setFormMaterial({...formMaterial, qty: e.target.value})} placeholder="0" />
-                    </div>
+                    <div><label className="block font-semibold mb-1">Unit</label><input type="text" className={inputClass} value={formMaterial.unit} onChange={e => setFormMaterial({...formMaterial, unit: e.target.value})}/></div>
+                    <div><label className="block font-semibold mb-1">Qty Awal</label><input type="number" required className={inputClass} value={formMaterial.qty} onChange={e => setFormMaterial({...formMaterial, qty: e.target.value})}/></div>
                   </div>
-                  <div className="flex justify-end gap-2 mt-4 pt-2 border-t">
-                    <button type="button" onClick={() => setShowModalMaterial(false)} className={`px-4 py-2 border rounded-lg ${darkMode ? 'border-slate-600 hover:bg-slate-700' : 'border-slate-300 hover:bg-slate-100'}`}>Batal</button>
-                    <button type="submit" className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white font-semibold rounded-lg">Simpan</button>
-                  </div>
+                  <div className="flex justify-end gap-2 mt-4 pt-2 border-t"><button type="button" onClick={() => setShowModalMaterial(false)} className="px-4 py-2 border rounded-lg">Batal</button><button type="submit" className="px-4 py-2 bg-emerald-600 text-white font-semibold rounded-lg">Simpan</button></div>
                 </form>
               </div>
             </div>
@@ -484,29 +652,23 @@ export default function App() {
           {showModalMasuk && (
             <div className="fixed inset-0 bg-black bg-opacity-60 flex items-center justify-center z-50 p-4">
               <div className={`w-full max-w-lg p-6 rounded-xl shadow-2xl border ${darkMode ? 'bg-slate-800 border-slate-700 text-white' : 'bg-white border-slate-200 text-slate-800'}`}>
-                <div className="flex justify-between items-center mb-4 border-b pb-2">
-                  <h3 className="font-bold text-base">Tambah Transaksi Stok Masuk</h3>
-                  <button onClick={() => setShowModalMasuk(false)} className="text-slate-400 hover:text-red-500"><X size={20}/></button>
-                </div>
+                <div className="flex justify-between items-center mb-4 border-b pb-2"><h3 className="font-bold text-base">Tambah Stok Masuk</h3><button onClick={() => setShowModalMasuk(false)}><X size={20}/></button></div>
                 <form onSubmit={handleAddMasuk} className="space-y-3 text-xs">
                   <div className="grid grid-cols-2 gap-2">
                     <div><label className="block font-semibold mb-1">Tanggal</label><input type="date" required className={inputClass} value={formMasuk.tanggal} onChange={e => setFormMasuk({...formMasuk, tanggal: e.target.value})}/></div>
-                    <div><label className="block font-semibold mb-1">Unit</label><input type="text" required className={inputClass} value={formMasuk.unit} onChange={e => setFormMasuk({...formMasuk, unit: e.target.value})} placeholder="REP 110"/></div>
+                    <div><label className="block font-semibold mb-1">Unit</label><input type="text" required className={inputClass} value={formMasuk.unit} onChange={e => setFormMasuk({...formMasuk, unit: e.target.value})}/></div>
                   </div>
                   <div className="grid grid-cols-2 gap-2">
-                    <div><label className="block font-semibold mb-1">Kode Barang</label><input type="text" required className={inputClass} value={formMasuk.kode} onChange={e => setFormMasuk({...formMasuk, kode: e.target.value})} placeholder="U045"/></div>
-                    <div><label className="block font-semibold mb-1">Merk</label><input type="text" className={inputClass} value={formMasuk.merk} onChange={e => setFormMasuk({...formMasuk, merk: e.target.value})} placeholder="Genuine"/></div>
+                    <div><label className="block font-semibold mb-1">Kode Barang</label><input type="text" required className={inputClass} value={formMasuk.kode} onChange={e => setFormMasuk({...formMasuk, kode: e.target.value})}/></div>
+                    <div><label className="block font-semibold mb-1">Merk</label><input type="text" className={inputClass} value={formMasuk.merk} onChange={e => setFormMasuk({...formMasuk, merk: e.target.value})}/></div>
                   </div>
-                  <div><label className="block font-semibold mb-1">Deskripsi Barang</label><input type="text" required className={inputClass} value={formMasuk.description} onChange={e => setFormMasuk({...formMasuk, description: e.target.value})} placeholder="OIL ENGINE"/></div>
+                  <div><label className="block font-semibold mb-1">Deskripsi</label><input type="text" required className={inputClass} value={formMasuk.description} onChange={e => setFormMasuk({...formMasuk, description: e.target.value})}/></div>
                   <div className="grid grid-cols-3 gap-2">
-                    <div><label className="block font-semibold mb-1">Qty</label><input type="number" required className={inputClass} value={formMasuk.qty} onChange={e => setFormMasuk({...formMasuk, qty: e.target.value})} placeholder="10"/></div>
-                    <div><label className="block font-semibold mb-1">Satuan</label><input type="text" required className={inputClass} value={formMasuk.satuan} onChange={e => setFormMasuk({...formMasuk, satuan: e.target.value})} placeholder="Liter"/></div>
-                    <div><label className="block font-semibold mb-1">No. PO</label><input type="text" className={inputClass} value={formMasuk.noPo} onChange={e => setFormMasuk({...formMasuk, noPo: e.target.value})} placeholder="PO-001"/></div>
+                    <div><label className="block font-semibold mb-1">Qty</label><input type="number" required className={inputClass} value={formMasuk.qty} onChange={e => setFormMasuk({...formMasuk, qty: e.target.value})}/></div>
+                    <div><label className="block font-semibold mb-1">Satuan</label><input type="text" required className={inputClass} value={formMasuk.satuan} onChange={e => setFormMasuk({...formMasuk, satuan: e.target.value})}/></div>
+                    <div><label className="block font-semibold mb-1">No. PO</label><input type="text" className={inputClass} value={formMasuk.noPo} onChange={e => setFormMasuk({...formMasuk, noPo: e.target.value})}/></div>
                   </div>
-                  <div className="flex justify-end gap-2 mt-4 pt-2 border-t">
-                    <button type="button" onClick={() => setShowModalMasuk(false)} className={`px-4 py-2 border rounded-lg ${darkMode ? 'border-slate-600 hover:bg-slate-700' : 'border-slate-300 hover:bg-slate-100'}`}>Batal</button>
-                    <button type="submit" className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white font-semibold rounded-lg">Simpan</button>
-                  </div>
+                  <div className="flex justify-end gap-2 mt-4 pt-2 border-t"><button type="button" onClick={() => setShowModalMasuk(false)} className="px-4 py-2 border rounded-lg">Batal</button><button type="submit" className="px-4 py-2 bg-blue-600 text-white font-semibold rounded-lg">Simpan</button></div>
                 </form>
               </div>
             </div>
@@ -516,28 +678,22 @@ export default function App() {
           {showModalKeluar && (
             <div className="fixed inset-0 bg-black bg-opacity-60 flex items-center justify-center z-50 p-4">
               <div className={`w-full max-w-lg p-6 rounded-xl shadow-2xl border ${darkMode ? 'bg-slate-800 border-slate-700 text-white' : 'bg-white border-slate-200 text-slate-800'}`}>
-                <div className="flex justify-between items-center mb-4 border-b pb-2">
-                  <h3 className="font-bold text-base">Tambah Transaksi Stok Keluar</h3>
-                  <button onClick={() => setShowModalKeluar(false)} className="text-slate-400 hover:text-red-500"><X size={20}/></button>
-                </div>
+                <div className="flex justify-between items-center mb-4 border-b pb-2"><h3 className="font-bold text-base">Tambah Stok Keluar</h3><button onClick={() => setShowModalKeluar(false)}><X size={20}/></button></div>
                 <form onSubmit={handleAddKeluar} className="space-y-3 text-xs">
                   <div className="grid grid-cols-2 gap-2">
                     <div><label className="block font-semibold mb-1">Tanggal</label><input type="date" required className={inputClass} value={formKeluar.tanggal} onChange={e => setFormKeluar({...formKeluar, tanggal: e.target.value})}/></div>
-                    <div><label className="block font-semibold mb-1">Unit</label><input type="text" required className={inputClass} value={formKeluar.unit} onChange={e => setFormKeluar({...formKeluar, unit: e.target.value})} placeholder="REP 110"/></div>
+                    <div><label className="block font-semibold mb-1">Unit</label><input type="text" required className={inputClass} value={formKeluar.unit} onChange={e => setFormKeluar({...formKeluar, unit: e.target.value})}/></div>
                   </div>
                   <div className="grid grid-cols-2 gap-2">
-                    <div><label className="block font-semibold mb-1">Kode Barang</label><input type="text" required className={inputClass} value={formKeluar.kode} onChange={e => setFormKeluar({...formKeluar, kode: e.target.value})} placeholder="SC081"/></div>
-                    <div><label className="block font-semibold mb-1">Mekanik</label><input type="text" className={inputClass} value={formKeluar.mekanik} onChange={e => setFormKeluar({...formKeluar, mekanik: e.target.value})} placeholder="Endang"/></div>
+                    <div><label className="block font-semibold mb-1">Kode Barang</label><input type="text" required className={inputClass} value={formKeluar.kode} onChange={e => setFormKeluar({...formKeluar, kode: e.target.value})}/></div>
+                    <div><label className="block font-semibold mb-1">Mekanik</label><input type="text" className={inputClass} value={formKeluar.mekanik} onChange={e => setFormKeluar({...formKeluar, mekanik: e.target.value})}/></div>
                   </div>
-                  <div><label className="block font-semibold mb-1">Nama Barang</label><input type="text" required className={inputClass} value={formKeluar.namaBarang} onChange={e => setFormKeluar({...formKeluar, namaBarang: e.target.value})} placeholder="SPRING BELAKANG"/></div>
+                  <div><label className="block font-semibold mb-1">Nama Barang</label><input type="text" required className={inputClass} value={formKeluar.namaBarang} onChange={e => setFormKeluar({...formKeluar, namaBarang: e.target.value})}/></div>
                   <div className="grid grid-cols-2 gap-2">
-                    <div><label className="block font-semibold mb-1">Qty Keluar</label><input type="number" required className={inputClass} value={formKeluar.qty} onChange={e => setFormKeluar({...formKeluar, qty: e.target.value})} placeholder="1"/></div>
-                    <div><label className="block font-semibold mb-1">Keterangan</label><input type="text" className={inputClass} value={formKeluar.keterangan} onChange={e => setFormKeluar({...formKeluar, keterangan: e.target.value})} placeholder="Rusak / Ganti"/></div>
+                    <div><label className="block font-semibold mb-1">Qty Keluar</label><input type="number" required className={inputClass} value={formKeluar.qty} onChange={e => setFormKeluar({...formKeluar, qty: e.target.value})}/></div>
+                    <div><label className="block font-semibold mb-1">Keterangan</label><input type="text" className={inputClass} value={formKeluar.keterangan} onChange={e => setFormKeluar({...formKeluar, keterangan: e.target.value})}/></div>
                   </div>
-                  <div className="flex justify-end gap-2 mt-4 pt-2 border-t">
-                    <button type="button" onClick={() => setShowModalKeluar(false)} className={`px-4 py-2 border rounded-lg ${darkMode ? 'border-slate-600 hover:bg-slate-700' : 'border-slate-300 hover:bg-slate-100'}`}>Batal</button>
-                    <button type="submit" className="px-4 py-2 bg-amber-600 hover:bg-amber-700 text-white font-semibold rounded-lg">Simpan</button>
-                  </div>
+                  <div className="flex justify-end gap-2 mt-4 pt-2 border-t"><button type="button" onClick={() => setShowModalKeluar(false)} className="px-4 py-2 border rounded-lg">Batal</button><button type="submit" className="px-4 py-2 bg-amber-600 text-white font-semibold rounded-lg">Simpan</button></div>
                 </form>
               </div>
             </div>
@@ -547,31 +703,12 @@ export default function App() {
           {showModalUser && (
             <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
               <div className={`w-full max-w-md p-6 rounded-xl shadow-lg border ${darkMode ? 'bg-slate-800 border-slate-700 text-white' : 'bg-white border-slate-200 text-slate-800'}`}>
-                <div className="flex justify-between items-center mb-4 border-b pb-2">
-                  <h3 className="font-bold text-base">Tambah Pengguna Baru</h3>
-                  <button onClick={() => setShowModalUser(false)} className="text-slate-400 hover:text-red-500"><X size={20}/></button>
-                </div>
+                <div className="flex justify-between items-center mb-4 border-b pb-2"><h3 className="font-bold text-base">Tambah Pengguna Baru</h3><button onClick={() => setShowModalUser(false)}><X size={20}/></button></div>
                 <form onSubmit={handleAddUser} className="space-y-3 text-xs">
-                  <div>
-                    <label className="block font-semibold mb-1">Nama Lengkap</label>
-                    <input type="text" required className={inputClass} value={formUser.nama} onChange={e => setFormUser({...formUser, nama: e.target.value})} placeholder="Misal: Budi Santoso"/>
-                  </div>
-                  <div>
-                    <label className="block font-semibold mb-1">Username Login</label>
-                    <input type="text" required className={inputClass} value={formUser.username} onChange={e => setFormUser({...formUser, username: e.target.value})} placeholder="budi_logistik"/>
-                  </div>
-                  <div>
-                    <label className="block font-semibold mb-1">Peran / Hak Akses (Role)</label>
-                    <select className={selectClass} value={formUser.role} onChange={e => setFormUser({...formUser, role: e.target.value})}>
-                      <option value="Admin">Admin (Full Akses & Kelola User)</option>
-                      <option value="Editor">Editor (Input & Kelola Stok)</option>
-                      <option value="Viewer">Viewer (Hanya Bisa Melihat Data)</option>
-                    </select>
-                  </div>
-                  <div className="flex justify-end gap-2 mt-4 pt-2 border-t">
-                    <button type="button" onClick={() => setShowModalUser(false)} className={`px-4 py-2 border rounded-lg ${darkMode ? 'border-slate-600 hover:bg-slate-700' : 'border-slate-300 hover:bg-slate-100'}`}>Batal</button>
-                    <button type="submit" className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white font-semibold rounded-lg">Simpan</button>
-                  </div>
+                  <div><label className="block font-semibold mb-1">Nama Lengkap</label><input type="text" required className={inputClass} value={formUser.nama} onChange={e => setFormUser({...formUser, nama: e.target.value})}/></div>
+                  <div><label className="block font-semibold mb-1">Username</label><input type="text" required className={inputClass} value={formUser.username} onChange={e => setFormUser({...formUser, username: e.target.value})}/></div>
+                  <div><label className="block font-semibold mb-1">Role</label><select className={selectClass} value={formUser.role} onChange={e => setFormUser({...formUser, role: e.target.value})}><option value="Admin">Admin</option><option value="Editor">Editor</option><option value="Viewer">Viewer</option></select></div>
+                  <div className="flex justify-end gap-2 mt-4 pt-2 border-t"><button type="button" onClick={() => setShowModalUser(false)} className="px-4 py-2 border rounded-lg">Batal</button><button type="submit" className="px-4 py-2 bg-blue-600 text-white font-semibold rounded-lg">Simpan</button></div>
                 </form>
               </div>
             </div>
