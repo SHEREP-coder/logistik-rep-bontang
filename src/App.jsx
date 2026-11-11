@@ -174,6 +174,11 @@ export default function App() {
   const [selectedMonth, setSelectedMonth] = useState('');
   const [selectedYear, setSelectedYear] = useState('');
   const [darkMode, setDarkMode] = useState(false);
+  const [fontSize, setFontSize] = useState(() => { try { return Number(localStorage.getItem('rep_font')) || 18; } catch (e) { return 18; } });
+  useEffect(() => {
+    document.documentElement.style.fontSize = fontSize + 'px';
+    try { localStorage.setItem('rep_font', String(fontSize)); } catch (e) { /* abaikan */ }
+  }, [fontSize]);
   const [loadingCloud, setLoadingCloud] = useState(false);
   const [saving, setSaving] = useState(false);
   const [toast, setToast] = useState(null);
@@ -777,6 +782,35 @@ export default function App() {
     } catch (err) { notify('Gagal: ' + err.message, 'error'); }
   };
 
+  const recalcStock = async () => {
+    if (!isAdmin) return notify('Hanya Admin.', 'error');
+    const changes = dataMaterial.map((m) => {
+      const t = totalsByKode.get(String(m.Kode || '').toLowerCase()) || { in: 0, out: 0 };
+      return { m, qty: t.in - t.out };
+    }).filter((x) => x.qty !== Number(x.m.Qty || 0));
+    if (changes.length === 0) return notify('Stok sudah sesuai dengan transaksi.');
+    const neg = changes.filter((x) => x.qty < 0).length;
+    if (!window.confirm(`Hitung ulang stok ${changes.length} barang menjadi (total masuk - total keluar)?${neg ? `\n${neg} barang akan bernilai minus karena barang keluar lebih besar dari barang masuk.` : ''}\nStok yang ada saat ini akan diganti. Disarankan backup dulu (menu Laporan).`)) return;
+    setImporting(true); setImportMsg('Menghitung ulang stok...');
+    try {
+      let done = 0;
+      for (const part of chunk(changes, 400)) {
+        const batch = writeBatch(db);
+        part.forEach((x) => batch.update(doc(db, 'material', x.m.id), { Qty: x.qty }));
+        await batch.commit();
+        done += part.length;
+        setImportMsg(`Menghitung ulang stok... ${done}/${changes.length}`);
+      }
+      setImportMsg(`Selesai. ${changes.length} barang diperbarui.`);
+      notify('Stok berhasil dihitung ulang.');
+    } catch (err) {
+      console.error(err);
+      const m = err.code === 'resource-exhausted' ? 'Kuota tulis harian Firebase habis. Coba lagi setelah kuota reset (sekitar pukul 15.00 WIB).' : 'Gagal: ' + (err.code || err.message);
+      setImportMsg(m); notify(m, 'error');
+    }
+    setImporting(false);
+  };
+
   const downloadSheets = (filename, sheets) => {
     const wb = XLSX.utils.book_new();
     Object.entries(sheets).forEach(([name, rows]) => XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(rows.map(stripMeta)), name));
@@ -846,7 +880,12 @@ export default function App() {
         .po-input { background: transparent; color: ${INK}; outline: none; width: 100%; }
         .po-input:focus { background: #fffbe6; }
         @page { size: A4 portrait; margin: 0; }
+        .app-main, .app-main > div, .overflow-x-auto { scrollbar-width: auto; scrollbar-color: #94a3b8 rgba(148,163,184,0.2); }
+        .app-main::-webkit-scrollbar, .overflow-x-auto::-webkit-scrollbar { width: 14px; height: 14px; }
+        .app-main::-webkit-scrollbar-thumb, .overflow-x-auto::-webkit-scrollbar-thumb { background: #94a3b8; border-radius: 8px; border: 3px solid transparent; background-clip: content-box; }
+        .app-main::-webkit-scrollbar-track, .overflow-x-auto::-webkit-scrollbar-track { background: rgba(148,163,184,0.2); }
         @media print {
+          html { font-size: 16px !important; }
           html, body, #root, .app-root, .app-main, .app-content { overflow: visible !important; height: auto !important; display: block !important; background: #fff !important; }
           body * { visibility: hidden !important; }
           #po-sheet, #po-sheet * { visibility: visible !important; }
@@ -865,7 +904,7 @@ export default function App() {
       )}
 
       {/* SIDEBAR */}
-      <div className={`no-print w-72 flex flex-col border-r ${darkMode ? 'bg-slate-950 border-slate-800 text-slate-300' : 'bg-slate-900 border-slate-800 text-slate-300'}`}>
+      <div className={`no-print w-72 shrink-0 flex flex-col border-r ${darkMode ? 'bg-slate-950 border-slate-800 text-slate-300' : 'bg-slate-900 border-slate-800 text-slate-300'}`}>
         <div className="p-4 border-b border-slate-800 flex items-center gap-3 bg-slate-950">
           <div className="w-10 h-10 flex items-center justify-center">
             <img src="/logo_PT_REP_transparan.png" alt="Logo" className="w-full h-full object-contain" />
@@ -895,6 +934,15 @@ export default function App() {
           <button onClick={() => setDarkMode(!darkMode)} className="w-full flex items-center gap-3 px-3 py-2 rounded-lg hover:bg-slate-800 text-slate-400 hover:text-white">
             <Moon size={16} /> {darkMode ? 'Mode Terang' : 'Mode Gelap'}
           </button>
+          <div className="flex items-center justify-between px-3 py-1 text-slate-400 text-xs">
+            <span>Ukuran Huruf</span>
+            <div className="flex gap-1">
+              {[[16, 'text-xs'], [18, 'text-sm'], [20, 'text-lg']].map(([sz, cls]) => (
+                <button key={sz} onClick={() => setFontSize(sz)} title={`Huruf ${sz}px`}
+                  className={`w-8 h-8 rounded-lg font-bold flex items-center justify-center ${cls} ${fontSize === sz ? 'bg-yellow-500 text-slate-950' : 'bg-slate-800 text-slate-300 hover:bg-slate-700'}`}>A</button>
+              ))}
+            </div>
+          </div>
           <div className="pt-2 border-t border-slate-800 flex items-center gap-3 px-3 py-2">
             <div className="w-8 h-8 rounded-full bg-emerald-600 flex items-center font-bold text-white justify-center text-xs">{(profile.nama || '?').charAt(0)}</div>
             <div className="overflow-hidden flex-1">
@@ -907,8 +955,8 @@ export default function App() {
       </div>
 
       {/* KONTEN UTAMA */}
-      <div className="app-content flex-1 flex flex-col overflow-hidden">
-        <header className={`no-print p-4 border-b flex justify-between items-center shadow-sm ${darkMode ? 'bg-slate-900 border-slate-800' : 'bg-white border-slate-200'}`}>
+      <div className="app-content flex-1 min-w-0 flex flex-col overflow-hidden">
+        <header className={`no-print p-4 border-b flex flex-wrap gap-2 justify-between items-center shadow-sm ${darkMode ? 'bg-slate-900 border-slate-800' : 'bg-white border-slate-200'}`}>
           <div>
             <h1 className="text-xl font-bold flex items-center gap-2">
               {activeTab}
@@ -958,12 +1006,12 @@ export default function App() {
                 </div>
               </div>
 
-              <div className={`rounded-xl shadow-sm border overflow-hidden ${card}`}>
+              <div className={`rounded-xl shadow-sm border overflow-x-auto ${card}`}>
                 <div className="p-4 border-b flex items-center justify-between bg-amber-50">
                   <h3 className="font-bold text-xs uppercase tracking-wider text-amber-700 flex items-center gap-2"><AlertTriangle size={16} /> Perhatian: Material Mencapai Stok Minimum & Wajib Segera Di-Order (PO)</h3>
                   <button onClick={() => goTab('Form & Cetak PO')} className="text-xs bg-yellow-500 text-slate-950 font-bold px-3 py-1 rounded-lg">Buka Form PO ➔</button>
                 </div>
-                <table className="w-full text-left text-xs">
+                <table className="w-full min-w-[860px] text-left text-sm">
                   <thead className={`border-b font-semibold ${thead}`}>
                     <tr><th className="p-3.5">KODE</th><th className="p-3.5">NAMA BARANG</th><th className="p-3.5">LOKASI RAK</th><th className="p-3.5 text-center">STOK SAAT INI</th><th className="p-3.5 text-center">BATAS MINIMUM</th><th className="p-3.5 text-center">STATUS</th></tr>
                   </thead>
@@ -993,7 +1041,7 @@ export default function App() {
                   { title: 'Barang Masuk Terbaru', rows: filteredMasuk.slice(0, 5), color: 'text-emerald-600', sign: '+', tab: 'Stok Masuk', date: (r) => r.Tanggal, name: (r) => r.Description },
                   { title: 'Barang Keluar Terbaru', rows: filteredKeluar.slice(0, 5), color: 'text-rose-600', sign: '-', tab: 'Stok Keluar', date: (r) => r['Doc.Date'], name: (r) => r['Nama Barang'] },
                 ].map((b) => (
-                  <div key={b.title} className={`rounded-xl shadow-sm border overflow-hidden ${card}`}>
+                  <div key={b.title} className={`rounded-xl shadow-sm border overflow-x-auto ${card}`}>
                     <div className="p-3.5 border-b flex justify-between items-center"><h3 className="font-bold text-xs uppercase tracking-wider">{b.title}</h3><button onClick={() => goTab(b.tab)} className="text-[11px] text-blue-500 font-semibold">Lihat semua ➔</button></div>
                     <table className="w-full text-xs"><tbody className={`divide-y ${divide}`}>
                       {b.rows.length === 0 ? <tr><td className="p-4 text-center text-slate-400">Belum ada transaksi.</td></tr> : b.rows.map((r) => (
@@ -1010,8 +1058,8 @@ export default function App() {
           {activeTab === 'Master Barang' && (
             <div className="space-y-4">
               {SearchBox({ placeholder: "Cari nama barang, kode barcode, part number, atau lokasi..." })}
-              <div className={`rounded-xl shadow-sm border overflow-hidden ${card}`}>
-                <table className="w-full text-left text-xs">
+              <div className={`rounded-xl shadow-sm border overflow-x-auto ${card}`}>
+                <table className="w-full min-w-[860px] text-left text-sm">
                   <thead className={`border-b font-semibold ${thead}`}>
                     <tr><th className="p-3.5">KODE / BARCODE</th><th className="p-3.5">NAMA BARANG</th><th className="p-3.5">PART NO.</th><th className="p-3.5">LOKASI</th><th className="p-3.5 text-center">MIN</th><th className="p-3.5 text-center">STOK</th><th className="p-3.5 text-center">STATUS PO</th>{canEdit && <th className="p-3.5 text-center">AKSI</th>}</tr>
                   </thead>
@@ -1050,8 +1098,8 @@ export default function App() {
             <div className="space-y-4">
               {PeriodFilter()}
               {SearchBox({ placeholder: "Cari kode, deskripsi, unit, atau No. PO..." })}
-              <div className={`rounded-xl shadow-sm border overflow-hidden ${card}`}>
-                <table className="w-full text-left text-xs">
+              <div className={`rounded-xl shadow-sm border overflow-x-auto ${card}`}>
+                <table className="w-full min-w-[860px] text-left text-sm">
                   <thead className={`border-b font-semibold ${thead}`}>
                     <tr><th className="p-3.5">TANGGAL</th><th className="p-3.5">UNIT</th><th className="p-3.5">KODE</th><th className="p-3.5">DESKRIPSI</th><th className="p-3.5">NO. PO</th><th className="p-3.5">QTY</th>{isAdmin && <th className="p-3.5 text-center">AKSI</th>}</tr>
                   </thead>
@@ -1076,8 +1124,8 @@ export default function App() {
             <div className="space-y-4">
               {PeriodFilter()}
               {SearchBox({ placeholder: "Cari kode, nama barang, unit, atau mekanik..." })}
-              <div className={`rounded-xl shadow-sm border overflow-hidden ${card}`}>
-                <table className="w-full text-left text-xs">
+              <div className={`rounded-xl shadow-sm border overflow-x-auto ${card}`}>
+                <table className="w-full min-w-[860px] text-left text-sm">
                   <thead className={`border-b font-semibold ${thead}`}>
                     <tr><th className="p-3.5">TANGGAL</th><th className="p-3.5">UNIT</th><th className="p-3.5">KODE</th><th className="p-3.5">NAMA BARANG</th><th className="p-3.5">MEKANIK</th><th className="p-3.5">KETERANGAN</th><th className="p-3.5">QTY</th>{isAdmin && <th className="p-3.5 text-center">AKSI</th>}</tr>
                   </thead>
@@ -1108,6 +1156,7 @@ export default function App() {
                 <div className="flex flex-wrap gap-2">
                   <button onClick={fillPoFromNeeded} className="bg-amber-500 hover:bg-amber-600 text-slate-950 px-3 py-2 rounded-lg text-xs font-bold flex items-center gap-1.5"><AlertTriangle size={14} /> Isi dari Barang Wajib Order ({poNeededItems.length})</button>
                   <button onClick={addPoRow} className="bg-slate-700 hover:bg-slate-800 text-white px-3 py-2 rounded-lg text-xs font-semibold flex items-center gap-1.5"><Plus size={14} /> Baris</button>
+                  <button onClick={() => setPoItems((items) => (items.length > 1 ? items.slice(0, -1) : items))} className="bg-rose-600 hover:bg-rose-700 text-white px-3 py-2 rounded-lg text-xs font-semibold flex items-center gap-1.5"><Trash2 size={14} /> Hapus Baris Terakhir</button>
                   {canEdit && <button onClick={savePo} disabled={saving} className="bg-emerald-600 hover:bg-emerald-700 disabled:opacity-60 text-white px-3 py-2 rounded-lg text-xs font-semibold flex items-center gap-1.5"><Save size={14} /> {editingPoId ? 'Perbarui Arsip' : 'Simpan ke Arsip'}</button>}
                   <button onClick={() => window.print()} className="bg-blue-600 hover:bg-blue-700 text-white px-3 py-2 rounded-lg text-xs font-semibold flex items-center gap-1.5"><Printer size={14} /> Cetak</button>
                   <button onClick={resetPoForm} className="bg-white border border-slate-300 text-slate-700 px-3 py-2 rounded-lg text-xs font-semibold flex items-center gap-1.5"><FilePlus2 size={14} /> Form Baru</button>
@@ -1144,7 +1193,7 @@ export default function App() {
                       {[['NO', '6%'], ['URAIAN', '32%'], ['PART NUMBER', '18%'], ['QTY', '8%'], ['UNIT PRICE', '14%'], ['KETERANGAN', '22%']].map(([h, w]) => (
                         <th key={h} className="py-1 font-bold" style={{ width: w, borderRight: `1.5px solid ${INK}` }}>{h}</th>
                       ))}
-                      <th className="no-print w-8" style={{ border: 'none' }}></th>
+                      <th className="no-print w-12" style={{ border: 'none' }}></th>
                     </tr>
                   </thead>
                   <tbody>
@@ -1156,7 +1205,7 @@ export default function App() {
                             {it.filler ? null : <input className={`po-input px-1 py-0.5 ${f === 'qty' || f === 'unitPrice' ? 'text-center' : ''}`} value={it[f]} onChange={(e) => updatePoItem(it.id, f, e.target.value)} />}
                           </td>
                         ))}
-                        <td className="no-print text-center" style={{ border: 'none' }}>{!it.filler && <button onClick={() => removePoRow(it.id)} className="text-rose-500 hover:text-rose-700"><X size={14} /></button>}</td>
+                        <td className="no-print text-center" style={{ border: 'none' }}>{!it.filler && <button onClick={() => removePoRow(it.id)} title="Hapus baris ini" className="p-1.5 rounded-md text-rose-600 bg-rose-50 hover:bg-rose-600 hover:text-white"><Trash2 size={15} /></button>}</td>
                       </tr>
                     ))}
                   </tbody>
@@ -1184,8 +1233,8 @@ export default function App() {
             return (
               <div className="space-y-4">
                 {SearchBox({ placeholder: "Cari no. PO, equipment, kode alat, atau nama barang..." })}
-                <div className={`rounded-xl shadow-sm border overflow-hidden ${card}`}>
-                  <table className="w-full text-left text-xs">
+                <div className={`rounded-xl shadow-sm border overflow-x-auto ${card}`}>
+                  <table className="w-full min-w-[860px] text-left text-sm">
                     <thead className={`border-b font-semibold ${thead}`}>
                       <tr><th className="p-3.5">NO. PO</th><th className="p-3.5">TANGGAL</th><th className="p-3.5">EQUIPMENT</th><th className="p-3.5">KODE ALAT</th><th className="p-3.5 text-center">JML ITEM</th><th className="p-3.5">DIBUAT OLEH</th><th className="p-3.5 text-center">AKSI</th></tr>
                     </thead>
@@ -1217,8 +1266,8 @@ export default function App() {
                 {canEdit && <button onClick={saveOpname} disabled={saving || opnameChanges.length === 0} className="bg-emerald-600 disabled:opacity-50 text-white px-4 py-2 rounded-lg text-xs font-semibold shadow flex items-center gap-1.5"><Save size={14} /> Simpan Opname</button>}
               </div>
               {SearchBox({ placeholder: "Cari kode, nama barang, atau lokasi..." })}
-              <div className={`rounded-xl shadow-sm border overflow-hidden ${card}`}>
-                <table className="w-full text-left text-xs">
+              <div className={`rounded-xl shadow-sm border overflow-x-auto ${card}`}>
+                <table className="w-full min-w-[860px] text-left text-sm">
                   <thead className={`border-b font-semibold ${thead}`}>
                     <tr><th className="p-3.5">KODE</th><th className="p-3.5">NAMA BARANG</th><th className="p-3.5">LOKASI</th><th className="p-3.5 text-center">SISTEM</th><th className="p-3.5 text-center">FISIK</th><th className="p-3.5 text-center">SELISIH</th></tr>
                   </thead>
@@ -1257,14 +1306,14 @@ export default function App() {
                 </select>
               </div>
               {kartu ? (
-                <div className={`rounded-xl shadow-sm border overflow-hidden ${card}`}>
+                <div className={`rounded-xl shadow-sm border overflow-x-auto ${card}`}>
                   <div className="p-4 border-b flex flex-wrap gap-6 text-xs">
                     <div><p className="text-slate-400 uppercase font-semibold">Kode</p><p className="font-mono font-bold text-sm">{kartu.mat.Kode}</p></div>
                     <div><p className="text-slate-400 uppercase font-semibold">Nama Barang</p><p className="font-bold text-sm">{kartu.mat['Nama Barang']}</p></div>
                     <div><p className="text-slate-400 uppercase font-semibold">Lokasi</p><p className="font-bold text-sm">{kartu.mat.Lokasi || 'Rak A1'}</p></div>
                     <div><p className="text-slate-400 uppercase font-semibold">Stok Saat Ini</p><p className="font-bold text-sm text-emerald-600">{kartu.mat.Qty}</p></div>
                   </div>
-                  <table className="w-full text-left text-xs">
+                  <table className="w-full min-w-[860px] text-left text-sm">
                     <thead className={`border-b font-semibold ${thead}`}><tr><th className="p-3.5">TANGGAL</th><th className="p-3.5">KETERANGAN</th><th className="p-3.5 text-center">MASUK</th><th className="p-3.5 text-center">KELUAR</th><th className="p-3.5 text-center">SALDO</th></tr></thead>
                     <tbody className={`divide-y ${divide}`}>
                       <tr className="bg-slate-50 text-slate-700"><td className="p-3.5">-</td><td className="p-3.5 font-semibold">Saldo Awal</td><td /><td /><td className="p-3.5 text-center font-bold">{kartu.saldoAwal}</td></tr>
@@ -1284,9 +1333,9 @@ export default function App() {
           {activeTab === 'Rekap Stok' && (
             <div className="space-y-4">
               {SearchBox({ placeholder: "Cari kode, nama barang, part number, atau lokasi..." })}
-              <div className={`rounded-xl shadow-sm border overflow-hidden ${card}`}>
+              <div className={`rounded-xl shadow-sm border overflow-x-auto ${card}`}>
                 <div className="p-4 border-b flex justify-between items-center"><h3 className="font-bold text-sm">Rekap Persediaan</h3><button onClick={exportAll} className="bg-emerald-600 text-white px-3 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1.5"><Download size={14} /> Excel</button></div>
-                <table className="w-full text-left text-xs">
+                <table className="w-full min-w-[860px] text-left text-sm">
                   <thead className={`border-b font-semibold ${thead}`}>
                     <tr><th className="p-3.5">KODE</th><th className="p-3.5">NAMA</th><th className="p-3.5">PART NO.</th><th className="p-3.5">LOKASI</th><th className="p-3.5 text-center">TOTAL MASUK</th><th className="p-3.5 text-center">TOTAL KELUAR</th><th className="p-3.5 text-center">STOK</th></tr>
                   </thead>
@@ -1332,9 +1381,9 @@ export default function App() {
 
           {/* ===================== PENGGUNA ===================== */}
           {activeTab === 'Pengguna' && isAdmin && (
-            <div className={`rounded-xl shadow-sm border overflow-hidden ${card}`}>
+            <div className={`rounded-xl shadow-sm border overflow-x-auto ${card}`}>
               <div className="p-4 border-b flex justify-between items-center"><h3 className="font-bold text-sm">Manajemen Pengguna</h3><button onClick={() => setShowModalUser(true)} className="bg-blue-600 text-white px-3 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1"><Plus size={14} /> Tambah Pengguna</button></div>
-              <table className="w-full text-left text-xs">
+              <table className="w-full min-w-[860px] text-left text-sm">
                 <thead className={`border-b font-semibold ${thead}`}><tr><th className="p-3.5">NAMA</th><th className="p-3.5">USERNAME</th><th className="p-3.5">ROLE</th><th className="p-3.5">STATUS</th><th className="p-3.5 text-center">AKSI</th></tr></thead>
                 <tbody className={`divide-y ${divide}`}>
                   {daftarPengguna.map((u) => (
@@ -1391,6 +1440,15 @@ export default function App() {
                     </label>
                     <button disabled={importing} onClick={importFromPublic} className="px-3 py-2 rounded-lg text-xs font-semibold border border-slate-300 bg-white text-slate-700 disabled:opacity-50">Impor dari file bawaan (public)</button>
                   </div>
+                  {importMsg && <p className="text-xs font-semibold text-blue-600">{importMsg}</p>}
+                </div>
+              )}
+
+              {isAdmin && (
+                <div className={`p-6 rounded-xl border shadow-sm space-y-3 ${card}`}>
+                  <h3 className="font-bold text-sm border-b pb-2 flex items-center gap-2"><ClipboardList size={16} /> Hitung Ulang Stok dari Transaksi</h3>
+                  <p className="text-xs text-slate-400">Mengisi stok setiap barang = total barang masuk − total barang keluar yang tercatat. Gunakan bila stok hasil impor Excel tampil 0. Stok yang sudah ada akan diganti.</p>
+                  <button disabled={importing} onClick={recalcStock} className="px-3 py-2 rounded-lg text-xs font-semibold bg-amber-500 text-slate-950 disabled:opacity-50">Hitung Ulang Stok</button>
                   {importMsg && <p className="text-xs font-semibold text-blue-600">{importMsg}</p>}
                 </div>
               )}
