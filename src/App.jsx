@@ -934,15 +934,6 @@ export default function App() {
           <button onClick={() => setDarkMode(!darkMode)} className="w-full flex items-center gap-3 px-3 py-2 rounded-lg hover:bg-slate-800 text-slate-400 hover:text-white">
             <Moon size={16} /> {darkMode ? 'Mode Terang' : 'Mode Gelap'}
           </button>
-          <div className="flex items-center justify-between px-3 py-1 text-slate-400 text-xs">
-            <span>Ukuran Huruf</span>
-            <div className="flex gap-1">
-              {[[16, 'text-xs'], [18, 'text-sm'], [20, 'text-lg']].map(([sz, cls]) => (
-                <button key={sz} onClick={() => setFontSize(sz)} title={`Huruf ${sz}px`}
-                  className={`w-8 h-8 rounded-lg font-bold flex items-center justify-center ${cls} ${fontSize === sz ? 'bg-yellow-500 text-slate-950' : 'bg-slate-800 text-slate-300 hover:bg-slate-700'}`}>A</button>
-              ))}
-            </div>
-          </div>
           <div className="pt-2 border-t border-slate-800 flex items-center gap-3 px-3 py-2">
             <div className="w-8 h-8 rounded-full bg-emerald-600 flex items-center font-bold text-white justify-center text-xs">{(profile.nama || '?').charAt(0)}</div>
             <div className="overflow-hidden flex-1">
@@ -1419,6 +1410,18 @@ export default function App() {
                   <span className="text-slate-400">Username</span><span className="font-mono font-semibold">{profile.username}</span>
                   <span className="text-slate-400">Role</span><span className="font-semibold">{profile.role}</span>
                 </div>
+              </div>
+
+              <div className={`p-6 rounded-xl border shadow-sm space-y-3 ${card}`}>
+                <h3 className="font-bold text-sm border-b pb-2">Tampilan</h3>
+                <div className="flex flex-wrap items-center gap-3">
+                  <span className="text-xs font-semibold w-28">Ukuran Huruf</span>
+                  {[[16, 'Kecil'], [18, 'Sedang'], [20, 'Besar']].map(([sz, label]) => (
+                    <button key={sz} type="button" onClick={() => setFontSize(sz)}
+                      className={`px-4 py-2 rounded-lg text-xs font-semibold border ${fontSize === sz ? 'bg-yellow-500 border-yellow-500 text-slate-950' : 'bg-white border-slate-300 text-slate-700 hover:bg-slate-50'}`}>{label}</button>
+                  ))}
+                </div>
+                <p className="text-xs text-slate-400">Pilihan disimpan di browser ini. Ukuran huruf tidak memengaruhi hasil cetak PO.</p>
               </div>
 
               <form onSubmit={changePassword} className={`p-6 rounded-xl border shadow-sm space-y-3 ${card}`}>
