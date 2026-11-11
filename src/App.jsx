@@ -1,6 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import * => as XLSX from 'xlsx'; // Dipakai untuk export
-import * as XLSXLib from 'xlsx';
+import * as XLSX from 'xlsx';
 import { 
   Search, Plus, LayoutDashboard, Box, ArrowDownToLine, ArrowUpFromLine, 
   FileText, ClipboardList, BookOpen, BarChart3, Users, Settings, 
@@ -40,7 +39,7 @@ export default function App() {
   const [dataMaterial, setDataMaterial] = useState([]);
   const [dataMasuk, setDataMasuk] = useState([]);
   const [dataKeluar, setDataKeluar] = useState([]);
-  const [riwayatPo, setRiwayatPo] = useState([]); // Database arsip PO yang sudah diprint
+  const [riwayatPo, setRiwayatPo] = useState([]);
   const [selectedItemCode, setSelectedItemCode] = useState("");
   const [physicalStocks, setPhysicalStocks] = useState({});
 
@@ -60,7 +59,7 @@ export default function App() {
   const [formMasuk, setFormMasuk] = useState({ tanggal: '', unit: '', kode: '', description: '', merk: '', qty: 0, satuan: 'Pcs', noPo: '' });
   const [formKeluar, setFormKeluar] = useState({ tanggal: '', unit: '', kode: '', namaBarang: '', mekanik: '', qty: 0, keterangan: '' });
 
-  // State untuk Form Pembuatan PO Khas Blangko PT. REP
+  // State Form Blangko PO Khas PT. REP
   const [poHeader, setPoHeader] = useState({
     noPo: "A " + Math.floor(100000 + Math.random() * 900000),
     equipment: "VOLVO FMX 420",
@@ -97,15 +96,14 @@ export default function App() {
         if (matList.length === 0) {
           const response = await fetch('/BACKLOG_LOGISTIK_2026_update (1).xlsx');
           const arrayBuffer = await response.arrayBuffer();
-          const workbook = XLSXLib.read(arrayBuffer, { type: 'array' });
+          const workbook = XLSX.read(arrayBuffer, { type: 'array' });
           
-          let mat = workbook.Sheets['MATERIAL'] ? XLSXLib.utils.sheet_to_json(workbook.Sheets['MATERIAL']) : [];
+          let mat = workbook.Sheets['MATERIAL'] ? XLSX.utils.sheet_to_json(workbook.Sheets['MATERIAL']) : [];
           mat = mat.map(item => ({ 
             ...item, 
             Lokasi: item.Lokasi || 'Rak A1', 
             MinQty: item.MinQty !== undefined ? Number(item.MinQty) : 5 
           }));
-          
           setDataMaterial(mat);
         } else {
           matList = matList.map(item => ({ 
@@ -176,7 +174,6 @@ export default function App() {
     } catch (error) { alert("Gagal."); }
   };
 
-  // Fungsi tambah baris manual pada lembar PO
   const handleAddPoRow = () => {
     setPoItems([...poItems, { id: Date.now(), uraian: '', partNumber: '', qty: 1, unitPrice: 0, keterangan: '' }]);
   };
@@ -186,7 +183,6 @@ export default function App() {
     setPoItems(poItems.filter(item => item.id !== id));
   };
 
-  // Masukkan item dari daftar stok menipis otomatis ke form PO
   const handleImportLowStockToPo = () => {
     const lowItems = dataMaterial.filter(item => Number(item.Qty || 0) <= Number(item.MinQty || 5));
     if (lowItems.length === 0) return alert("Tidak ada barang dengan stok menipis saat ini.");
@@ -203,7 +199,6 @@ export default function App() {
     alert("Berhasil memuat item stok menipis ke lembar PO!");
   };
 
-  // Simpan & Print PO ke Database
   const handleSaveAndPrintPo = async () => {
     const newPoDoc = {
       ...poHeader,
@@ -216,16 +211,16 @@ export default function App() {
       window.print();
     } catch (e) {
       console.error(e);
-      window.print(); // Tetap print walau offline
+      window.print();
     }
   };
 
   const exportToExcel = () => {
-    const wb = XLSXLib.utils.book_new();
-    XLSXLib.utils.book_append_sheet(wb, XLSXLib.utils.json_to_sheet(dataMaterial), "MATERIAL");
-    XLSXLib.utils.book_append_sheet(wb, XLSXLib.utils.json_to_sheet(dataMasuk), "Barang Masuk");
-    XLSXLib.utils.book_append_sheet(wb, XLSXLib.utils.json_to_sheet(dataKeluar), "Barang Keluar");
-    XLSXLib.writeFile(wb, "BACKLOG_LOGISTIK_REP_UPDATE.xlsx");
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(dataMaterial), "MATERIAL");
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(dataMasuk), "Barang Masuk");
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(dataKeluar), "Barang Keluar");
+    XLSX.writeFile(wb, "BACKLOG_LOGISTIK_REP_UPDATE.xlsx");
   };
 
   const parseExcelDate = (serial) => {
@@ -270,7 +265,7 @@ export default function App() {
   return (
     <div className={`flex h-screen font-sans ${darkMode ? 'bg-slate-900 text-white' : 'bg-slate-50 text-slate-800'}`}>
       
-      {/* SIDEBAR (Tersembunyi otomatis saat dicetak) */}
+      {/* SIDEBAR */}
       <div className={`w-72 flex flex-col border-r print:hidden ${darkMode ? 'bg-slate-950 border-slate-800 text-slate-300' : 'bg-slate-900 border-slate-800 text-slate-300'}`}>
         <div className="p-4 border-b border-slate-800 flex items-center gap-3 bg-slate-950">
           <div className="w-10 h-10 flex items-center justify-center">
@@ -372,7 +367,6 @@ export default function App() {
 
         <main className="flex-1 p-6 overflow-auto">
           
-          {/* DASHBOARD */}
           {activeTab === 'Dashboard' && (
             <div className="space-y-6">
               <div className={`p-4 rounded-xl shadow-sm border flex flex-wrap gap-3 items-center ${darkMode ? 'bg-slate-800 border-slate-700' : 'bg-white border-slate-200'}`}>
@@ -411,7 +405,6 @@ export default function App() {
             </div>
           )}
 
-          {/* MASTER BARANG */}
           {activeTab === 'Master Barang' && (
             <div className="space-y-4">
               <div className={`p-4 rounded-xl shadow-sm border flex gap-3 items-center ${darkMode ? 'bg-slate-800 border-slate-700' : 'bg-white border-slate-200'}`}>
@@ -468,7 +461,6 @@ export default function App() {
           {/* FORM & CETAK PO (BLANGKO BIRU KHAS PT. REP) */}
           {activeTab === 'Form & Cetak PO' && (
             <div className="space-y-6">
-              {/* Panel Kontrol di Layar (Hilang saat Print) */}
               <div className={`p-4 rounded-xl border shadow-sm flex flex-wrap justify-between items-center gap-3 print:hidden ${darkMode ? 'bg-slate-800 border-slate-700' : 'bg-white border-slate-200'}`}>
                 <div className="flex items-center gap-3">
                   <button onClick={handleImportLowStockToPo} className="bg-amber-600 hover:bg-amber-700 text-white px-3 py-2 rounded-lg text-xs font-semibold flex items-center gap-1.5 shadow">
@@ -483,10 +475,9 @@ export default function App() {
                 </button>
               </div>
 
-              {/* TAMPILAN BLANGKO FISIK PO BERGARIS BIRU (Persis Gambar Asli) */}
+              {/* BLANGKO PO BERGARIS BIRU */}
               <div className="bg-white text-slate-900 p-8 rounded-xl shadow-xl border-4 border-blue-200 max-w-4xl mx-auto print:border-none print:shadow-none print:p-0 print:w-full">
                 
-                {/* Header Blangko */}
                 <div className="flex justify-between items-start border-b-2 border-blue-600 pb-4 mb-4">
                   <div className="flex items-center gap-3">
                     <div className="w-12 h-12 flex items-center justify-center bg-blue-900 rounded-lg text-white font-bold">REP</div>
@@ -509,7 +500,6 @@ export default function App() {
                   </div>
                 </div>
 
-                {/* Informasi Atas PO */}
                 <div className="grid grid-cols-2 gap-x-8 gap-y-2 mb-6 text-xs font-bold text-blue-900">
                   <div className="flex items-center gap-2">
                     <span className="w-28">EQUIPMENT</span>: 
@@ -529,7 +519,6 @@ export default function App() {
                   </div>
                 </div>
 
-                {/* Tabel Blangko Bergaris Biru */}
                 <div className="border-2 border-blue-500 rounded overflow-hidden mb-8">
                   <table className="w-full text-left text-xs border-collapse">
                     <thead>
@@ -614,7 +603,6 @@ export default function App() {
                   </table>
                 </div>
 
-                {/* Tanda Tangan Bawah Blangko */}
                 <div className="grid grid-cols-2 gap-16 pt-4 text-xs font-bold text-center">
                   <div className="space-y-16">
                     <p className="text-left font-semibold underline">DIKETAHUI OLEH,</p>
@@ -637,7 +625,7 @@ export default function App() {
             </div>
           )}
 
-          {/* ARSIP DATABASE PO YANG SUDAH Dibuat */}
+          {/* ARSIPS DATABASE PO */}
           {activeTab === 'Arsip Database PO' && (
             <div className="space-y-4">
               <div className={`p-4 rounded-xl border shadow-sm flex justify-between items-center ${darkMode ? 'bg-slate-800 border-slate-700' : 'bg-white border-slate-200'}`}>
@@ -686,7 +674,7 @@ export default function App() {
               <div className={`p-4 rounded-xl shadow-sm border flex gap-3 items-center ${darkMode ? 'bg-slate-800 border-slate-700' : 'bg-white border-slate-200'}`}>
                 <div className="relative flex-1">
                   <Search className="absolute left-3 top-2.5 text-slate-400" size={16} />
-                  <input type="text" placeholder="Cari barang masuk..." className={searchClass} value={pencarian} onChange={(e) => { setPencarian(e.target.value); setPageMasuk(1); }} />
+                  <input type="text" placeholder="Cari barang masuk..." className={searchClass} value={pencarian} onChange={(e) => setPencarian(e.target.value)} />
                 </div>
               </div>
               <div className={`rounded-xl shadow-sm border overflow-hidden ${darkMode ? 'bg-slate-800 border-slate-700' : 'bg-white border-slate-200'}`}>
@@ -695,7 +683,7 @@ export default function App() {
                     <tr><th className="p-3.5">TANGGAL</th><th className="p-3.5">KODE</th><th className="p-3.5">DESKRIPSI</th><th className="p-3.5">QTY</th></tr>
                   </thead>
                   <tbody className={`divide-y ${darkMode ? 'divide-slate-700' : 'divide-slate-100'}`}>
-                    {paginatedMasuk?.map((item, index) => (
+                    {filteredMasuk.map((item, index) => (
                       <tr key={index}><td className="p-3.5">{formatTanggalExcel(item.Tanggal)}</td><td className="p-3.5 font-mono">{item.Kode}</td><td className="p-3.5">{item.Description}</td><td className="p-3.5 font-bold text-emerald-600">+{item.Qty}</td></tr>
                     ))}
                   </tbody>
@@ -709,7 +697,7 @@ export default function App() {
               <div className={`p-4 rounded-xl shadow-sm border flex gap-3 items-center ${darkMode ? 'bg-slate-800 border-slate-700' : 'bg-white border-slate-200'}`}>
                 <div className="relative flex-1">
                   <Search className="absolute left-3 top-2.5 text-slate-400" size={16} />
-                  <input type="text" placeholder="Cari barang keluar..." className={searchClass} value={pencarian} onChange={(e) => { setPencarian(e.target.value); setPageKeluar(1); }} />
+                  <input type="text" placeholder="Cari barang keluar..." className={searchClass} value={pencarian} onChange={(e) => setPencarian(e.target.value)} />
                 </div>
               </div>
               <div className={`rounded-xl shadow-sm border overflow-hidden ${darkMode ? 'bg-slate-800 border-slate-700' : 'bg-white border-slate-200'}`}>
@@ -718,7 +706,7 @@ export default function App() {
                     <tr><th className="p-3.5">TANGGAL</th><th className="p-3.5">KODE</th><th className="p-3.5">NAMA BARANG</th><th className="p-3.5">QTY</th></tr>
                   </thead>
                   <tbody className={`divide-y ${darkMode ? 'divide-slate-700' : 'divide-slate-100'}`}>
-                    {paginatedKeluar?.map((item, index) => (
+                    {filteredKeluar.map((item, index) => (
                       <tr key={index}><td className="p-3.5">{formatTanggalExcel(item['Doc.Date'])}</td><td className="p-3.5 font-mono">{item.Kode}</td><td className="p-3.5">{item['Nama Barang']}</td><td className="p-3.5 font-bold text-rose-600">-{item.Qty}</td></tr>
                     ))}
                   </tbody>
@@ -762,7 +750,6 @@ export default function App() {
             </div>
           )}
 
-          {/* KARTU STOK */}
           {activeTab === 'Kartu Stok' && (
             <div className={`p-4 rounded-xl border shadow-sm flex items-center gap-4 ${darkMode ? 'bg-slate-800 border-slate-700' : 'bg-white border-slate-200'}`}>
               <span className="text-xs font-semibold">Pilih Barang:</span>
@@ -773,7 +760,6 @@ export default function App() {
             </div>
           )}
 
-          {/* REKAP STOK */}
           {activeTab === 'Rekap Stok' && (
             <div className={`rounded-xl shadow-sm border overflow-hidden ${darkMode ? 'bg-slate-800 border-slate-700' : 'bg-white border-slate-200'}`}>
               <div className="p-4 border-b flex justify-between items-center"><h3 className="font-bold text-sm">Rekap Persediaan</h3><button onClick={exportToExcel} className="bg-emerald-600 text-white px-3 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1.5"><Download size={14}/> Excel</button></div>
@@ -790,14 +776,12 @@ export default function App() {
             </div>
           )}
 
-          {/* LAPORAN */}
           {activeTab === 'Laporan' && (
             <div className={`p-4 rounded-xl border shadow-sm flex justify-between items-center ${darkMode ? 'bg-slate-800 border-slate-700' : 'bg-white border-slate-200'}`}>
               <h3 className="font-bold text-sm">Pusat Laporan</h3><button onClick={exportToExcel} className="bg-emerald-600 text-white px-3 py-2 rounded-lg text-xs font-semibold"><Download size={14}/> Unduh</button>
             </div>
           )}
 
-          {/* PENGGUNA */}
           {activeTab === 'Pengguna' && (
             <div className={`rounded-xl shadow-sm border overflow-hidden ${darkMode ? 'bg-slate-800 border-slate-700' : 'bg-white border-slate-200'}`}>
               <div className="p-4 border-b flex justify-between items-center"><h3 className="font-bold text-sm">Pengguna</h3>{currentUser.role === 'Admin' && <button onClick={() => setShowModalUser(true)} className="bg-blue-600 text-white px-3 py-1.5 rounded-lg text-xs font-semibold">Tambah</button>}</div>
@@ -812,7 +796,6 @@ export default function App() {
             </div>
           )}
 
-          {/* PENGATURAN */}
           {activeTab === 'Pengaturan' && (
             <div className={`p-6 rounded-xl border shadow-sm max-w-2xl space-y-4 ${darkMode ? 'bg-slate-800 border-slate-700' : 'bg-white border-slate-200'}`}>
               <h3 className="font-bold text-sm border-b pb-2">Pengaturan Sistem</h3>
