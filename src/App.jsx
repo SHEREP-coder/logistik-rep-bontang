@@ -3,7 +3,7 @@ import * as XLSX from 'xlsx';
 import { 
   Search, Plus, LayoutDashboard, Box, ArrowDownToLine, ArrowUpFromLine, 
   FileText, ClipboardList, BookOpen, BarChart3, Users, Settings, 
-  Moon, TrendingUp, TrendingDown, Calendar, X, Download, UserPlus, Sliders, Trash2
+  Moon, TrendingUp, TrendingDown, Calendar, X, Download, UserPlus, Sliders, Trash2, AlertTriangle
 } from 'lucide-react';
 
 import { initializeApp } from "firebase/app";
@@ -55,7 +55,8 @@ export default function App() {
   const [showModalMasuk, setShowModalMasuk] = useState(false);
   const [showModalKeluar, setShowModalKeluar] = useState(false);
 
-  const [formMaterial, setFormMaterial] = useState({ kode: '', nama: '', nomor: '', unit: 'Ea', qty: 0 });
+  // Form Master Barang dengan tambahan Lokasi (Rak/Yard)
+  const [formMaterial, setFormMaterial] = useState({ kode: '', nama: '', nomor: '', unit: 'Ea', lokasi: 'Rak A1', qty: 0 });
   const [formMasuk, setFormMasuk] = useState({ tanggal: '', unit: '', kode: '', description: '', merk: '', qty: 0, satuan: 'Pcs', noPo: '' });
   const [formKeluar, setFormKeluar] = useState({ tanggal: '', unit: '', kode: '', namaBarang: '', mekanik: '', qty: 0, keterangan: '' });
 
@@ -69,7 +70,7 @@ export default function App() {
       setLoadingCloud(true);
       try {
         const querySnapshotMat = await getDocs(collection(db, "material"));
-        const matList = querySnapshotMat.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+        let matList = querySnapshotMat.docs.map(doc => ({ id: doc.id, ...doc.data() }));
 
         const querySnapshotMasuk = await getDocs(collection(db, "barangMasuk"));
         const masukList = querySnapshotMasuk.docs.map(doc => ({ id: doc.id, ...doc.data() }));
@@ -83,6 +84,9 @@ export default function App() {
           const workbook = XLSX.read(arrayBuffer, { type: 'array' });
           
           let mat = workbook.Sheets['MATERIAL'] ? XLSX.utils.sheet_to_json(workbook.Sheets['MATERIAL']) : [];
+          // Otomatis berikan default lokasi jika data dari excel belum punya kolom Lokasi
+          mat = mat.map(item => ({ ...item, Lokasi: item.Lokasi || 'Rak A1' }));
+          
           let masuk = workbook.Sheets['Barang Masuk'] ? XLSX.utils.sheet_to_json(workbook.Sheets['Barang Masuk']) : [];
           let keluar = workbook.Sheets['Barang Keluar'] ? XLSX.utils.sheet_to_json(workbook.Sheets['Barang Keluar'], { range: 1 }) : [];
 
@@ -90,6 +94,8 @@ export default function App() {
           setDataMasuk(masuk);
           setDataKeluar(keluar);
         } else {
+          // Pastikan properti Lokasi ada
+          matList = matList.map(item => ({ ...item, Lokasi: item.Lokasi || 'Rak A1' }));
           setDataMaterial(matList);
           setDataMasuk(masukList);
           setDataKeluar(keluarList);
@@ -105,13 +111,21 @@ export default function App() {
   const handleAddMaterial = async (e) => {
     e.preventDefault();
     if (currentUser.role === 'Viewer') return alert("Akses ditolak!");
-    const newItem = { Kode: formMaterial.kode, 'Nama Barang': formMaterial.nama, 'Nomor Barang': formMaterial.nomor, 'Part Unit': formMaterial.unit, Qty: Number(formMaterial.qty), 'Base Unit of Measure': 'Ea' };
+    const newItem = { 
+      Kode: formMaterial.kode, 
+      'Nama Barang': formMaterial.nama, 
+      'Nomor Barang': formMaterial.nomor, 
+      'Part Unit': formMaterial.unit, 
+      Lokasi: formMaterial.lokasi,
+      Qty: Number(formMaterial.qty), 
+      'Base Unit of Measure': 'Ea' 
+    };
     try {
       await addDoc(collection(db, "material"), newItem);
       setDataMaterial([newItem, ...dataMaterial]);
       setShowModalMaterial(false);
-      setFormMaterial({ kode: '', nama: '', nomor: '', unit: 'Ea', qty: 0 });
-      alert("Berhasil disimpan!");
+      setFormMaterial({ kode: '', nama: '', nomor: '', unit: 'Ea', lokasi: 'Rak A1', qty: 0 });
+      alert("Produk baru berhasil disimpan!");
     } catch (error) { alert("Gagal menyimpan."); }
   };
 
@@ -187,11 +201,15 @@ export default function App() {
   const filteredMaterial = dataMaterial.filter(item => 
     item['Nama Barang']?.toLowerCase().includes(pencarian.toLowerCase()) || 
     item.Kode?.toLowerCase().includes(pencarian.toLowerCase()) ||
-    item['Nomor Barang']?.toString().toLowerCase().includes(pencarian.toLowerCase())
+    item['Nomor Barang']?.toString().toLowerCase().includes(pencarian.toLowerCase()) ||
+    item.Lokasi?.toLowerCase().includes(pencarian.toLowerCase())
   );
 
   const filteredMasuk = dataMasuk.filter(item => (item.Description?.toLowerCase().includes(pencarian.toLowerCase()) || item.Kode?.toLowerCase().includes(pencarian.toLowerCase())) && matchesMonthYear(item.Tanggal));
   const filteredKeluar = dataKeluar.filter(item => (item['Nama Barang']?.toLowerCase().includes(pencarian.toLowerCase()) || item.Kode?.toLowerCase().includes(pencarian.toLowerCase())) && matchesMonthYear(item['Doc.Date']));
+
+  // Filter Barang yang Stoknya Menipis (Qty <= 5) atau Habis (Qty === 0)
+  const lowStockItems = dataMaterial.filter(item => Number(item.Qty || 0) <= 5);
 
   const paginatedMaterial = filteredMaterial.slice((pageMaterial - 1) * rowsPerPage, pageMaterial * rowsPerPage);
   const paginatedMasuk = filteredMasuk.slice((pageMasuk - 1) * rowsPerPage, pageMasuk * rowsPerPage);
@@ -303,6 +321,7 @@ export default function App() {
 
         <main className="flex-1 p-6 overflow-auto">
           
+          {/* DASHBOARD DENGAN INFORMASI STOK MENIPIS / HABIS */}
           {activeTab === 'Dashboard' && (
             <div className="space-y-6">
               <div className={`p-4 rounded-xl shadow-sm border flex flex-wrap gap-3 items-center ${darkMode ? 'bg-slate-800 border-slate-700' : 'bg-white border-slate-200'}`}>
@@ -319,7 +338,8 @@ export default function App() {
                   {Array.from({ length: 4 }, (_, i) => 2024 + i).map(y => (<option key={y} value={y}>{y}</option>))}
                 </select>
               </div>
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+
+              <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
                 <div className={`p-5 rounded-xl border shadow-sm flex items-center justify-between ${darkMode ? 'bg-slate-800 border-slate-700' : 'bg-white border-slate-200'}`}>
                   <div><p className="text-xs font-semibold text-slate-400 uppercase">Total Master Barang</p><h3 className="text-2xl font-bold mt-1 text-blue-600">{dataMaterial.length} Item</h3></div>
                   <div className="p-3 bg-blue-50 text-blue-600 rounded-xl"><Box size={24} /></div>
@@ -332,16 +352,72 @@ export default function App() {
                   <div><p className="text-xs font-semibold text-slate-400 uppercase">Barang Keluar</p><h3 className="text-2xl font-bold mt-1 text-rose-600">{filteredKeluar.length} Trx</h3></div>
                   <div className="p-3 bg-rose-50 text-rose-600 rounded-xl"><TrendingDown size={24} /></div>
                 </div>
+                <div className={`p-5 rounded-xl border shadow-sm flex items-center justify-between ${darkMode ? 'bg-slate-800 border-slate-700' : 'bg-white border-slate-200'}`}>
+                  <div><p className="text-xs font-semibold text-slate-400 uppercase">Stok Menipis / Habis</p><h3 className="text-2xl font-bold mt-1 text-amber-500">{lowStockItems.length} Item</h3></div>
+                  <div className="p-3 bg-amber-50 text-amber-600 rounded-xl"><AlertTriangle size={24} /></div>
+                </div>
+              </div>
+
+              {/* TABEL PERINGATAN STOK MENIPIS / HABIS DI DASHBOARD */}
+              <div className={`rounded-xl shadow-sm border overflow-hidden ${darkMode ? 'bg-slate-800 border-slate-700' : 'bg-white border-slate-200'}`}>
+                <div className="p-4 border-b flex items-center justify-between bg-amber-50 dark:bg-slate-900">
+                  <h3 className="font-bold text-xs uppercase tracking-wider text-amber-700 dark:text-amber-400 flex items-center gap-2">
+                    <AlertTriangle size={16} /> Perhatian: Daftar Material dengan Stok Menipis (Qty $\le 5$) atau Habis ($0$)
+                  </h3>
+                  <span className="text-xs bg-amber-200 dark:bg-amber-900 text-amber-800 dark:text-amber-200 px-2 py-0.5 rounded font-bold">
+                    Total: {lowStockItems.length} Item
+                  </span>
+                </div>
+                <table className="w-full text-left text-xs">
+                  <thead className={`border-b font-semibold ${darkMode ? 'bg-slate-900 text-slate-400 border-slate-700' : 'bg-slate-50 text-slate-600 border-slate-200'}`}>
+                    <tr>
+                      <th className="p-3.5">KODE</th>
+                      <th className="p-3.5">NAMA BARANG</th>
+                      <th className="p-3.5">NOMOR PART</th>
+                      <th className="p-3.5">LOKASI RAK / YARD</th>
+                      <th className="p-3.5 text-center">SISA STOK</th>
+                      <th className="p-3.5 text-center">STATUS</th>
+                    </tr>
+                  </thead>
+                  <tbody className={`divide-y ${darkMode ? 'divide-slate-700' : 'divide-slate-100'}`}>
+                    {lowStockItems.length === 0 ? (
+                      <tr>
+                        <td colSpan="6" className="p-6 text-center text-slate-400">Semua stok barang dalam kondisi aman (&gt; 5 unit).</td>
+                      </tr>
+                    ) : (
+                      lowStockItems.slice(0, 15).map((item, idx) => {
+                        const q = Number(item.Qty || 0);
+                        return (
+                          <tr key={idx} className={`hover:bg-opacity-50 ${darkMode ? 'hover:bg-slate-700' : 'hover:bg-slate-50'}`}>
+                            <td className="p-3.5 font-mono font-bold">{item.Kode || '-'}</td>
+                            <td className="p-3.5 font-semibold">{item['Nama Barang'] || '-'}</td>
+                            <td className="p-3.5 text-slate-500 font-mono">{item['Nomor Barang'] || '-'}</td>
+                            <td className="p-3.5"><span className="bg-yellow-100 text-yellow-800 px-2 py-0.5 rounded font-bold text-[10px]">{item.Lokasi || 'Rak A1'}</span></td>
+                            <td className="p-3.5 text-center font-bold text-rose-600 text-sm">{q} {item['Base Unit of Measure'] || 'Ea'}</td>
+                            <td className="p-3.5 text-center">
+                              {q === 0 ? (
+                                <span className="bg-rose-100 text-rose-800 px-2 py-1 rounded font-bold text-[10px]">Habis Total</span>
+                              ) : (
+                                <span className="bg-amber-100 text-amber-800 px-2 py-1 rounded font-bold text-[10px]">Menipis</span>
+                              )}
+                            </td>
+                          </tr>
+                        );
+                      })
+                    )}
+                  </tbody>
+                </table>
               </div>
             </div>
           )}
 
+          {/* MASTER BARANG DENGAN KOLOM LOKASI */}
           {activeTab === 'Master Barang' && (
             <div>
               <div className={`p-4 rounded-xl shadow-sm border mb-4 flex gap-3 items-center ${darkMode ? 'bg-slate-800 border-slate-700' : 'bg-white border-slate-200'}`}>
                 <div className="relative flex-1">
                   <Search className="absolute left-3 top-2.5 text-slate-400" size={16} />
-                  <input type="text" placeholder="Cari nama barang..." className={searchClass} value={pencarian} onChange={(e) => { setPencarian(e.target.value); setPageMaterial(1); }} />
+                  <input type="text" placeholder="Cari nama barang, kode, part number, atau lokasi rak..." className={searchClass} value={pencarian} onChange={(e) => { setPencarian(e.target.value); setPageMaterial(1); }} />
                 </div>
               </div>
               <div className={`rounded-xl shadow-sm border overflow-hidden ${darkMode ? 'bg-slate-800 border-slate-700' : 'bg-white border-slate-200'}`}>
@@ -349,8 +425,9 @@ export default function App() {
                   <thead className={`border-b font-semibold ${darkMode ? 'bg-slate-900 text-slate-400 border-slate-700' : 'bg-slate-50 text-slate-600 border-slate-200'}`}>
                     <tr>
                       <th className="p-3.5">NAMA BARANG</th>
-                      <th className="p-3.5">KODE / NOMOR</th>
+                      <th className="p-3.5">KODE / NOMOR PART</th>
                       <th className="p-3.5">UNIT</th>
+                      <th className="p-3.5">LOKASI RAK / YARD</th>
                       <th className="p-3.5">STOK</th>
                     </tr>
                   </thead>
@@ -360,6 +437,11 @@ export default function App() {
                         <td className="p-3.5 font-semibold">{item['Nama Barang'] || '-'}</td>
                         <td className="p-3.5 text-slate-500 font-mono">{item.Kode} / {item['Nomor Barang'] || '-'}</td>
                         <td className="p-3.5">{item['Part Unit'] || '-'}</td>
+                        <td className="p-3.5">
+                          <span className="bg-blue-100 text-blue-800 px-2 py-0.5 rounded font-bold text-[10px]">
+                            📍 {item.Lokasi || 'Rak A1'}
+                          </span>
+                        </td>
                         <td className="p-3.5 font-bold text-emerald-600">{item.Qty || 0}</td>
                       </tr>
                     ))}
@@ -384,12 +466,7 @@ export default function App() {
               <div className={`rounded-xl shadow-sm border overflow-hidden ${darkMode ? 'bg-slate-800 border-slate-700' : 'bg-white border-slate-200'}`}>
                 <table className="w-full text-left text-xs">
                   <thead className={`border-b font-semibold ${darkMode ? 'bg-slate-900 text-slate-400 border-slate-700' : 'bg-slate-50 text-slate-600 border-slate-200'}`}>
-                    <tr>
-                      <th className="p-3.5">TANGGAL</th>
-                      <th className="p-3.5">KODE</th>
-                      <th className="p-3.5">DESKRIPSI</th>
-                      <th className="p-3.5">QTY</th>
-                    </tr>
+                    <tr><th className="p-3.5">TANGGAL</th><th className="p-3.5">KODE</th><th className="p-3.5">DESKRIPSI</th><th className="p-3.5">QTY</th></tr>
                   </thead>
                   <tbody className={`divide-y ${darkMode ? 'divide-slate-700' : 'divide-slate-100'}`}>
                     {paginatedMasuk.map((item, index) => (
@@ -417,12 +494,7 @@ export default function App() {
               <div className={`rounded-xl shadow-sm border overflow-hidden ${darkMode ? 'bg-slate-800 border-slate-700' : 'bg-white border-slate-200'}`}>
                 <table className="w-full text-left text-xs">
                   <thead className={`border-b font-semibold ${darkMode ? 'bg-slate-900 text-slate-400 border-slate-700' : 'bg-slate-50 text-slate-600 border-slate-200'}`}>
-                    <tr>
-                      <th className="p-3.5">TANGGAL</th>
-                      <th className="p-3.5">KODE</th>
-                      <th className="p-3.5">NAMA BARANG</th>
-                      <th className="p-3.5">QTY</th>
-                    </tr>
+                    <tr><th className="p-3.5">TANGGAL</th><th className="p-3.5">KODE</th><th className="p-3.5">NAMA BARANG</th><th className="p-3.5">QTY</th></tr>
                   </thead>
                   <tbody className={`divide-y ${darkMode ? 'divide-slate-700' : 'divide-slate-100'}`}>
                     {paginatedKeluar.map((item, index) => (
@@ -455,13 +527,7 @@ export default function App() {
               <div className={`rounded-xl shadow-sm border overflow-hidden ${darkMode ? 'bg-slate-800 border-slate-700' : 'bg-white border-slate-200'}`}>
                 <table className="w-full text-left text-xs">
                   <thead className={`border-b font-semibold ${darkMode ? 'bg-slate-900 text-slate-400 border-slate-700' : 'bg-slate-50 text-slate-600 border-slate-200'}`}>
-                    <tr>
-                      <th className="p-3.5">KODE</th>
-                      <th className="p-3.5">NAMA BARANG</th>
-                      <th className="p-3.5 text-center">STOK SISTEM</th>
-                      <th className="p-3.5 text-center">STOK FISIK (HITUNG)</th>
-                      <th className="p-3.5 text-center">SELISIH</th>
-                    </tr>
+                    <tr><th className="p-3.5">KODE</th><th className="p-3.5">NAMA BARANG</th><th className="p-3.5">LOKASI</th><th className="p-3.5 text-center">STOK SISTEM</th><th className="p-3.5 text-center">STOK FISIK</th><th className="p-3.5 text-center">SELISIH</th></tr>
                   </thead>
                   <tbody className={`divide-y ${darkMode ? 'divide-slate-700' : 'divide-slate-100'}`}>
                     {dataMaterial.slice(0, 30).map((item, index) => {
@@ -474,6 +540,7 @@ export default function App() {
                         <tr key={index}>
                           <td className="p-3.5 font-mono font-bold">{item.Kode || '-'}</td>
                           <td className="p-3.5 font-medium">{item['Nama Barang'] || '-'}</td>
+                          <td className="p-3.5 font-semibold text-blue-600">{item.Lokasi || 'Rak A1'}</td>
                           <td className="p-3.5 text-center font-bold text-blue-600">{stokSistem}</td>
                           <td className="p-3.5 text-center">
                             <input 
@@ -502,7 +569,7 @@ export default function App() {
                 <span className="text-xs font-semibold">Pilih atau Cari Barang:</span>
                 <select value={selectedItemCode} onChange={(e) => setSelectedItemCode(e.target.value)} className={selectClass}>
                   <option value="">-- Pilih Material Master Barang --</option>
-                  {dataMaterial.map((m, idx) => (<option key={idx} value={m.Kode}>{m.Kode} - {m['Nama Barang']}</option>))}
+                  {dataMaterial.map((m, idx) => (<option key={idx} value={m.Kode}>{m.Kode} - {m['Nama Barang']} (Lokasi: {m.Lokasi || 'Rak A1'})</option>))}
                 </select>
               </div>
 
@@ -546,12 +613,12 @@ export default function App() {
           {activeTab === 'Rekap Stok' && (
             <div className={`rounded-xl shadow-sm border overflow-hidden ${darkMode ? 'bg-slate-800 border-slate-700' : 'bg-white border-slate-200'}`}>
               <div className="p-4 border-b flex justify-between items-center">
-                <h3 className="font-bold text-sm">Rekapitulasi Status Persediaan Gudang</h3>
+                <h3 className="font-bold text-sm">Rekapitulasi Status Persediaan Gudang & Lokasi</h3>
                 <button onClick={exportToExcel} className="bg-emerald-600 hover:bg-emerald-700 text-white px-3 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1.5"><Download size={14}/> Unduh Excel</button>
               </div>
               <table className="w-full text-left text-xs">
                 <thead className={`border-b font-semibold ${darkMode ? 'bg-slate-900 text-slate-400 border-slate-700' : 'bg-slate-50 text-slate-600 border-slate-200'}`}>
-                  <tr><th className="p-3.5">KODE</th><th className="p-3.5">NAMA MATERIAL</th><th className="p-3.5 text-center">STOK TERSEDIA</th><th className="p-3.5 text-center">STATUS</th></tr>
+                  <tr><th className="p-3.5">KODE</th><th className="p-3.5">NAMA MATERIAL</th><th className="p-3.5">LOKASI RAK</th><th className="p-3.5 text-center">STOK TERSEDIA</th><th className="p-3.5 text-center">STATUS</th></tr>
                 </thead>
                 <tbody className={`divide-y ${darkMode ? 'divide-slate-700' : 'divide-slate-100'}`}>
                   {dataMaterial.slice(0, 40).map((item, index) => {
@@ -560,9 +627,10 @@ export default function App() {
                       <tr key={index}>
                         <td className="p-3.5 font-mono font-semibold">{item.Kode || '-'}</td>
                         <td className="p-3.5 font-medium">{item['Nama Barang'] || '-'}</td>
+                        <td className="p-3.5 font-bold text-blue-600">{item.Lokasi || 'Rak A1'}</td>
                         <td className="p-3.5 text-center font-bold text-emerald-600">{qty}</td>
                         <td className="p-3.5 text-center">
-                          {qty > 5 ? <span className="bg-emerald-100 text-emerald-800 px-2 py-1 rounded font-bold text-[10px]">Aman</span> : <span className="bg-rose-100 text-rose-800 px-2 py-1 rounded font-bold text-[10px]">Menipis</span>}
+                          {qty > 5 ? <span className="bg-emerald-100 text-emerald-800 px-2 py-1 rounded font-bold text-[10px]">Aman</span> : <span className="bg-rose-100 text-rose-800 px-2 py-1 rounded font-bold text-[10px]">Menipis / Habis</span>}
                         </td>
                       </tr>
                     );
@@ -629,20 +697,24 @@ export default function App() {
             </div>
           )}
 
-          {/* MODAL INPUT: PRODUK BARU */}
+          {/* MODAL INPUT: PRODUK BARU (DENGAN INPUT LOKASI RAK/YARD) */}
           {showModalMaterial && (
             <div className="fixed inset-0 bg-black bg-opacity-60 flex items-center justify-center z-50 p-4">
               <div className={`w-full max-w-lg p-6 rounded-xl shadow-2xl border ${darkMode ? 'bg-slate-800 border-slate-700 text-white' : 'bg-white border-slate-200 text-slate-800'}`}>
-                <div className="flex justify-between items-center mb-4 border-b pb-2"><h3 className="font-bold text-base">Tambah Produk Baru</h3><button onClick={() => setShowModalMaterial(false)}><X size={20}/></button></div>
+                <div className="flex justify-between items-center mb-4 border-b pb-2"><h3 className="font-bold text-base">Tambah Produk Baru & Lokasi Gudang</h3><button onClick={() => setShowModalMaterial(false)}><X size={20}/></button></div>
                 <form onSubmit={handleAddMaterial} className="space-y-3 text-xs">
-                  <div><label className="block font-semibold mb-1">Kode Barang</label><input type="text" required className={inputClass} value={formMaterial.kode} onChange={e => setFormMaterial({...formMaterial, kode: e.target.value})}/></div>
-                  <div><label className="block font-semibold mb-1">Nama Barang</label><input type="text" required className={inputClass} value={formMaterial.nama} onChange={e => setFormMaterial({...formMaterial, nama: e.target.value})}/></div>
-                  <div><label className="block font-semibold mb-1">Nomor Part</label><input type="text" className={inputClass} value={formMaterial.nomor} onChange={e => setFormMaterial({...formMaterial, nomor: e.target.value})}/></div>
+                  <div><label className="block font-semibold mb-1">Kode Barang</label><input type="text" required className={inputClass} value={formMaterial.kode} onChange={e => setFormMaterial({...formMaterial, kode: e.target.value})} placeholder="U198"/></div>
+                  <div><label className="block font-semibold mb-1">Nama Barang (Description)</label><input type="text" required className={inputClass} value={formMaterial.nama} onChange={e => setFormMaterial({...formMaterial, nama: e.target.value})} placeholder="FILTER OLI CAT"/></div>
+                  <div><label className="block font-semibold mb-1">Nomor Part / Barang</label><input type="text" className={inputClass} value={formMaterial.nomor} onChange={e => setFormMaterial({...formMaterial, nomor: e.target.value})} placeholder="1R-1808"/></div>
                   <div className="grid grid-cols-2 gap-2">
-                    <div><label className="block font-semibold mb-1">Unit</label><input type="text" className={inputClass} value={formMaterial.unit} onChange={e => setFormMaterial({...formMaterial, unit: e.target.value})}/></div>
-                    <div><label className="block font-semibold mb-1">Qty Awal</label><input type="number" required className={inputClass} value={formMaterial.qty} onChange={e => setFormMaterial({...formMaterial, qty: e.target.value})}/></div>
+                    <div><label className="block font-semibold mb-1">Part Unit</label><input type="text" className={inputClass} value={formMaterial.unit} onChange={e => setFormMaterial({...formMaterial, unit: e.target.value})} placeholder="REP 110"/></div>
+                    <div>
+                      <label className="block font-semibold mb-1">Lokasi (Rak / Yard)</label>
+                      <input type="text" required className={inputClass} value={formMaterial.lokasi} onChange={e => setFormMaterial({...formMaterial, lokasi: e.target.value})} placeholder="Rak A1 / Yard B"/>
+                    </div>
                   </div>
-                  <div className="flex justify-end gap-2 mt-4 pt-2 border-t"><button type="button" onClick={() => setShowModalMaterial(false)} className="px-4 py-2 border rounded-lg">Batal</button><button type="submit" className="px-4 py-2 bg-emerald-600 text-white font-semibold rounded-lg">Simpan</button></div>
+                  <div><label className="block font-semibold mb-1">Qty Awal</label><input type="number" required className={inputClass} value={formMaterial.qty} onChange={e => setFormMaterial({...formMaterial, qty: e.target.value})} placeholder="0"/></div>
+                  <div className="flex justify-end gap-2 mt-4 pt-2 border-t"><button type="button" onClick={() => setShowModalMaterial(false)} className="px-4 py-2 border rounded-lg">Batal</button><button type="submit" className="px-4 py-2 bg-emerald-600 text-white font-semibold rounded-lg">Simpan Produk</button></div>
                 </form>
               </div>
             </div>
