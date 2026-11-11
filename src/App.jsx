@@ -3,9 +3,29 @@ import * as XLSX from 'xlsx';
 import { 
   Search, Plus, LayoutDashboard, Box, ArrowDownToLine, ArrowUpFromLine, 
   FileText, ClipboardList, BookOpen, BarChart3, Users, Settings, 
-  RefreshCw, Moon, Tag, Upload, Layers, TrendingUp, TrendingDown, PackageCheck,
-  ChevronLeft, ChevronRight, Calendar, X, Download, ShieldCheck, UserPlus, Database, Sliders, Trash2
+  Moon, TrendingUp, TrendingDown, Calendar, X, Download, UserPlus, Sliders, Trash2
 } from 'lucide-react';
+
+// Import Firebase SDK
+import { initializeApp } from "firebase/app";
+import { getAnalytics } from "firebase/analytics";
+import { getFirestore, collection, getDocs, addDoc } from "firebase/firestore";
+
+// Konfigurasi Firebase Anda
+const firebaseConfig = {
+  apiKey: "AIzaSyAuetnYQDspE1IFbOcFttgSJMq3FOvmft0",
+  authDomain: "logistik-rep-bontang.firebaseapp.com",
+  projectId: "logistik-rep-bontang",
+  storageBucket: "logistik-rep-bontang.firebasestorage.app",
+  messagingSenderId: "26293450683",
+  appId: "1:26293450683:web:8d6458695a511b75ea369e",
+  measurementId: "G-E72GBTQ59N"
+};
+
+// Inisialisasi Firebase
+const app = initializeApp(firebaseConfig);
+const analytics = getAnalytics(app);
+const db = getFirestore(app);
 
 export default function App() {
   const [activeTab, setActiveTab] = useState('Dashboard');
@@ -13,16 +33,16 @@ export default function App() {
   const [selectedMonth, setSelectedMonth] = useState("");
   const [selectedYear, setSelectedYear] = useState("");
   const [darkMode, setDarkMode] = useState(false);
+  const [loadingCloud, setLoadingCloud] = useState(false);
 
-  // State Simulasi Login Pengguna (Bisa diubah untuk testing role)
-  // Role tersedia: "Admin", "Editor", "Viewer"
+  // State Simulasi Login Pengguna
   const [currentUser, setCurrentUser] = useState({
     nama: "Administrator PT. REP",
     username: "admin_rep",
     role: "Admin"
   });
 
-  // State Data (LocalStorage / Excel)
+  // State Data (Cloud Firestore / Excel)
   const [dataMaterial, setDataMaterial] = useState([]);
   const [dataMasuk, setDataMasuk] = useState([]);
   const [dataKeluar, setDataKeluar] = useState([]);
@@ -34,11 +54,11 @@ export default function App() {
   // State Modul Laporan
   const [jenisLaporan, setJenisLaporan] = useState("stok");
 
-  // State Modul Pengguna (Admin bisa tambah & hapus)
+  // State Modul Pengguna
   const [daftarPengguna, setDaftarPengguna] = useState([
-    { id: 1, nama: "Administrator PT. REP", username: "admin_rep", role: "Admin", site: "Bontang", status: "Aktif" },
-    { id: 2, nama: "Endang (Mekanik Lead)", username: "endang_mech", role: "Editor", site: "Bontang", status: "Aktif" },
-    { id: 3, nama: "Petugas Logistik Site", username: "logistik_btg", role: "Viewer", site: "Bontang", status: "Aktif" }
+    { id: '1', nama: "Administrator PT. REP", username: "admin_rep", role: "Admin", site: "Bontang", status: "Aktif" },
+    { id: '2', nama: "Endang (Mekanik Lead)", username: "endang_mech", role: "Editor", site: "Bontang", status: "Aktif" },
+    { id: '3', nama: "Petugas Logistik Site", username: "logistik_btg", role: "Viewer", site: "Bontang", status: "Aktif" }
   ]);
   const [showModalUser, setShowModalUser] = useState(false);
   const [formUser, setFormUser] = useState({ nama: '', username: '', role: 'Editor' });
@@ -57,20 +77,21 @@ export default function App() {
   const [pageKeluar, setPageKeluar] = useState(1);
   const rowsPerPage = 20;
 
+  // Ambil Data dari Firebase Firestore saat aplikasi dibuka
   useEffect(() => {
-    const bacaExcel = async () => {
+    const fetchDataFromCloud = async () => {
+      setLoadingCloud(true);
       try {
-        const localMat = localStorage.getItem('rep_material');
-        const localMasuk = localStorage.getItem('rep_masuk');
-        const localKeluar = localStorage.getItem('rep_keluar');
-        const localUsers = localStorage.getItem('rep_users');
+        const querySnapshotMat = await getDocs(collection(db, "material"));
+        const matList = querySnapshotMat.docs.map(doc => ({ id: doc.id, ...doc.data() }));
 
-        if (localMat && localMasuk && localKeluar) {
-          setDataMaterial(JSON.parse(localMat));
-          setDataMasuk(JSON.parse(localMasuk));
-          setDataKeluar(JSON.parse(localKeluar));
-          if (localUsers) setDaftarPengguna(JSON.parse(localUsers));
-        } else {
+        const querySnapshotMasuk = await getDocs(collection(db, "barangMasuk"));
+        const masukList = querySnapshotMasuk.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+
+        const querySnapshotKeluar = await getDocs(collection(db, "barangKeluar"));
+        const keluarList = querySnapshotKeluar.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+
+        if (matList.length === 0) {
           const response = await fetch('/BACKLOG_LOGISTIK_2026_update (1).xlsx');
           const arrayBuffer = await response.arrayBuffer();
           const workbook = XLSX.read(arrayBuffer, { type: 'array' });
@@ -82,61 +103,105 @@ export default function App() {
           setDataMaterial(mat);
           setDataMasuk(masuk);
           setDataKeluar(keluar);
-
-          localStorage.setItem('rep_material', JSON.stringify(mat));
-          localStorage.setItem('rep_masuk', JSON.stringify(masuk));
-          localStorage.setItem('rep_keluar', JSON.stringify(keluar));
+        } else {
+          setDataMaterial(matList);
+          setDataMasuk(masukList);
+          setDataKeluar(keluarList);
         }
       } catch (error) {
-        console.error("Gagal membaca Excel:", error);
+        console.error("Gagal memuat data dari Firebase:", error);
       }
+      setLoadingCloud(false);
     };
-    bacaExcel();
+
+    fetchDataFromCloud();
   }, []);
 
-  const simpanKeLocalStorage = (mat, masuk, keluar) => {
-    if (mat) { setDataMaterial(mat); localStorage.setItem('rep_material', JSON.stringify(mat)); }
-    if (masuk) { setDataMasuk(masuk); localStorage.setItem('rep_masuk', JSON.stringify(masuk)); }
-    if (keluar) { setDataKeluar(keluar); localStorage.setItem('rep_keluar', JSON.stringify(keluar)); }
-  };
-
-  const handleAddMaterial = (e) => {
+  // Fungsi Tambah Master Barang ke Firebase
+  const handleAddMaterial = async (e) => {
     e.preventDefault();
     if (currentUser.role === 'Viewer') {
       alert("Akses ditolak! Akun Viewer hanya dapat melihat data.");
       return;
     }
-    const newItem = { Kode: formMaterial.kode, 'Nama Barang': formMaterial.nama, 'Nomor Barang': formMaterial.nomor, 'Part Unit': formMaterial.unit, Qty: Number(formMaterial.qty), 'Base Unit of Measure': 'Ea' };
-    simpanKeLocalStorage([newItem, ...dataMaterial], null, null);
-    setShowModalMaterial(false);
-    setFormMaterial({ kode: '', nama: '', nomor: '', unit: 'Ea', qty: 0 });
-    alert("Master barang berhasil ditambahkan!");
+    const newItem = { 
+      Kode: formMaterial.kode, 
+      'Nama Barang': formMaterial.nama, 
+      'Nomor Barang': formMaterial.nomor, 
+      'Part Unit': formMaterial.unit, 
+      Qty: Number(formMaterial.qty), 
+      'Base Unit of Measure': 'Ea' 
+    };
+
+    try {
+      await addDoc(collection(db, "material"), newItem);
+      setDataMaterial([newItem, ...dataMaterial]);
+      setShowModalMaterial(false);
+      setFormMaterial({ kode: '', nama: '', nomor: '', unit: 'Ea', qty: 0 });
+      alert("Master barang berhasil ditambahkan ke database online!");
+    } catch (error) {
+      console.error("Error adding material: ", error);
+      alert("Gagal menyimpan ke database online.");
+    }
   };
 
-  const handleAddMasuk = (e) => {
+  // Fungsi Tambah Stok Masuk ke Firebase
+  const handleAddMasuk = async (e) => {
     e.preventDefault();
     if (currentUser.role === 'Viewer') {
       alert("Akses ditolak! Akun Viewer hanya dapat melihat data.");
       return;
     }
-    const newItem = { Tanggal: formMasuk.tanggal, Unit: formMasuk.unit, Kode: formMasuk.kode, Description: formMasuk.description, Merk: formMasuk.merk, Qty: Number(formMasuk.qty), 'Qty.1': formMasuk.satuan, 'No. PO': formMasuk.noPo };
-    simpanKeLocalStorage(null, [newItem, ...dataMasuk], null);
-    setShowModalMasuk(false);
-    setFormMasuk({ tanggal: '', unit: '', kode: '', description: '', merk: '', qty: 0, satuan: 'Pcs', noPo: '' });
-    alert("Stok masuk berhasil dicatat!");
+    const newItem = { 
+      Tanggal: formMasuk.tanggal, 
+      Unit: formMasuk.unit, 
+      Kode: formMasuk.kode, 
+      Description: formMasuk.description, 
+      Merk: formMasuk.merk, 
+      Qty: Number(formMasuk.qty), 
+      'Qty.1': formMasuk.satuan, 
+      'No. PO': formMasuk.noPo 
+    };
+
+    try {
+      await addDoc(collection(db, "barangMasuk"), newItem);
+      setDataMasuk([newItem, ...dataMasuk]);
+      setShowModalMasuk(false);
+      setFormMasuk({ tanggal: '', unit: '', kode: '', description: '', merk: '', qty: 0, satuan: 'Pcs', noPo: '' });
+      alert("Stok masuk berhasil dicatat ke database online!");
+    } catch (error) {
+      console.error("Error adding masuk: ", error);
+      alert("Gagal menyimpan ke database online.");
+    }
   };
 
-  const handleAddKeluar = (e) => {
+  // Fungsi Tambah Stok Keluar ke Firebase
+  const handleAddKeluar = async (e) => {
     e.preventDefault();
     if (currentUser.role === 'Viewer') {
       alert("Akses ditolak! Akun Viewer hanya dapat melihat data.");
       return;
     }
-    const newItem = { 'Doc.Date': formKeluar.tanggal, Unit: formKeluar.unit, Kode: formKeluar.kode, 'Nama Barang': formKeluar.namaBarang, Mekanik: formKeluar.mekanik, Qty: Number(formKeluar.qty), Keterangan: formKeluar.keterangan };
-    simpanKeLocalStorage(null, null, [newItem, ...dataKeluar]);
-    setShowModalKeluar(false);
-    setFormKeluar({ tanggal: '', unit: '', kode: '', namaBarang: '', mekanik: '', qty: 0, keterangan: '' });
-    alert("Stok keluar berhasil dicatat!");
+    const newItem = { 
+      'Doc.Date': formKeluar.tanggal, 
+      Unit: formKeluar.unit, 
+      Kode: formKeluar.kode, 
+      'Nama Barang': formKeluar.namaBarang, 
+      Mekanik: formKeluar.mekanik, 
+      Qty: Number(formKeluar.qty), 
+      Keterangan: formKeluar.keterangan 
+    };
+
+    try {
+      await addDoc(collection(db, "barangKeluar"), newItem);
+      setDataKeluar([newItem, ...dataKeluar]);
+      setShowModalKeluar(false);
+      setFormKeluar({ tanggal: '', unit: '', kode: '', namaBarang: '', mekanik: '', qty: 0, keterangan: '' });
+      alert("Stok keluar berhasil dicatat ke database online!");
+    } catch (error) {
+      console.error("Error adding keluar: ", error);
+      alert("Gagal menyimpan ke database online.");
+    }
   };
 
   // Fungsi Tambah Pengguna (Hanya Admin)
@@ -147,7 +212,7 @@ export default function App() {
       return;
     }
     const newUser = {
-      id: Date.now(),
+      id: String(Date.now()),
       nama: formUser.nama,
       username: formUser.username,
       role: formUser.role,
@@ -156,7 +221,6 @@ export default function App() {
     };
     const updatedUsers = [...daftarPengguna, newUser];
     setDaftarPengguna(updatedUsers);
-    localStorage.setItem('rep_users', JSON.stringify(updatedUsers));
     setShowModalUser(false);
     setFormUser({ nama: '', username: '', role: 'Editor' });
     alert("Pengguna baru berhasil ditambahkan!");
@@ -175,7 +239,6 @@ export default function App() {
     if (confirm("Apakah Anda yakin ingin menghapus pengguna ini?")) {
       const updatedUsers = daftarPengguna.filter(u => u.id !== id);
       setDaftarPengguna(updatedUsers);
-      localStorage.setItem('rep_users', JSON.stringify(updatedUsers));
       alert("Pengguna berhasil dihapus.");
     }
   };
@@ -293,7 +356,6 @@ export default function App() {
             <Moon size={16} /> {darkMode ? 'Mode Terang' : 'Mode Gelap'}
           </button>
           
-          {/* Switcher Role Simulasi untuk testing */}
           <div className="px-3 py-2 bg-slate-950 rounded-lg border border-slate-800 text-xs space-y-1">
             <p className="text-[10px] text-slate-400">Simulasi Mode Akun:</p>
             <select 
@@ -327,11 +389,13 @@ export default function App() {
         
         <header className={`p-4 border-b flex justify-between items-center shadow-sm ${darkMode ? 'bg-slate-900 border-slate-800' : 'bg-white border-slate-200'}`}>
           <div>
-            <h1 className="text-xl font-bold">{activeTab}</h1>
+            <h1 className="text-xl font-bold flex items-center gap-2">
+              {activeTab} 
+              {loadingCloud && <span className="text-xs text-yellow-500 font-normal animate-pulse">☁️ Sinkronisasi Cloud...</span>}
+            </h1>
             <p className="text-xs text-slate-400">Logistic Management System - PT. Ryan Eka Pratama Site Bontang</p>
           </div>
 
-          {/* Tombol Aksi Input (Disembunyikan jika Viewer) */}
           <div className="flex items-center gap-2">
             {currentUser.role !== 'Viewer' ? (
               <>
@@ -883,7 +947,7 @@ export default function App() {
             </div>
           )}
 
-          {/* PENGGUNA (Hanya Admin yang bisa Tambah & Hapus) */}
+          {/* PENGGUNA */}
           {activeTab === 'Pengguna' && (
             <div className="space-y-4">
               <div className={`p-4 rounded-xl border shadow-sm flex justify-between items-center ${darkMode ? 'bg-slate-800 border-slate-700' : 'bg-white border-slate-200'}`}>
@@ -978,18 +1042,13 @@ export default function App() {
                     <button onClick={exportToExcel} className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-xs font-semibold shadow flex items-center gap-1.5">
                       <Download size={14} /> Unduh / Ekspor Database Excel (.xlsx)
                     </button>
-                    {currentUser.role === 'Admin' && (
-                      <button onClick={() => { localStorage.clear(); window.location.reload(); }} className="px-4 py-2 bg-rose-600 hover:bg-rose-700 text-white rounded-lg text-xs font-semibold shadow">
-                        Reset Data Cache Lokal
-                      </button>
-                    )}
                   </div>
                 </div>
               </div>
             </div>
           )}
 
-          {/* MODAL INPUT: TAMBAH PENGGUNA (Pilihan Role Admin, Editor, Viewer) */}
+          {/* MODAL INPUT: TAMBAH PENGGUNA */}
           {showModalUser && (
             <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
               <div className={`w-full max-w-md p-6 rounded-xl shadow-lg border ${darkMode ? 'bg-slate-800 border-slate-700 text-white' : 'bg-white border-slate-200 text-slate-800'}`}>
@@ -1065,7 +1124,7 @@ export default function App() {
                   <div><label className="block font-semibold mb-1">Deskripsi Barang</label><input type="text" required className="w-full p-2 border rounded-lg dark:bg-slate-900 dark:border-slate-700" value={formMasuk.description} onChange={e => setFormMasuk({...formMasuk, description: e.target.value})} placeholder="OIL ENGINE"/></div>
                   <div className="grid grid-cols-3 gap-2">
                     <div><label className="block font-semibold mb-1">Qty</label><input type="number" required className="w-full p-2 border rounded-lg dark:bg-slate-900 dark:border-slate-700" value={formMasuk.qty} onChange={e => setFormMasuk({...formMasuk, qty: e.target.value})} placeholder="10"/></div>
-                    <div><label className="block font-semibold mb-1">Satuan</label><input type="text" className="w-full p-2 border rounded-lg dark:bg-slate-900 dark:border-slate-700" value={formMasuk.satuan} onChange={e => setFormMasuk({...formMasuk, satuan: e.target.value})} placeholder="Liter"/></div>
+                    <div><label className="block font-semibold mb-1">Satuan</label><input type="text" required className="w-full p-2 border rounded-lg dark:bg-slate-900 dark:border-slate-700" value={formMasuk.satuan} onChange={e => setFormMasuk({...formMasuk, satuan: e.target.value})} placeholder="Liter"/></div>
                     <div><label className="block font-semibold mb-1">No. PO</label><input type="text" className="w-full p-2 border rounded-lg dark:bg-slate-900 dark:border-slate-700" value={formMasuk.noPo} onChange={e => setFormMasuk({...formMasuk, noPo: e.target.value})} placeholder="PO-001"/></div>
                   </div>
                   <div className="flex justify-end gap-2 mt-4 pt-2 border-t"><button type="button" onClick={() => setShowModalMasuk(false)} className="px-4 py-2 border rounded-lg">Batal</button><button type="submit" className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white font-semibold rounded-lg">Simpan</button></div>
@@ -1088,13 +1147,13 @@ export default function App() {
                     <div><label className="block font-semibold mb-1">Unit</label><input type="text" required className="w-full p-2 border rounded-lg dark:bg-slate-900 dark:border-slate-700" value={formKeluar.unit} onChange={e => setFormKeluar({...formKeluar, unit: e.target.value})} placeholder="REP 110"/></div>
                   </div>
                   <div className="grid grid-cols-2 gap-2">
-                    <div><label className="block font-semibold mb-1">Kode Barang</label><input type="text" required className="w-full p-2 border rounded-lg dark:bg-slate-900 dark:border-slate-700" value={formKeluar.kode} onChange={e => setFormKeluar({...formKeluar, kode: e.target.value})} placeholder="SC081"/></div>
-                    <div><label className="block font-semibold mb-1">Mekanik</label><input type="text" className="w-full p-2 border rounded-lg dark:bg-slate-900 dark:border-slate-700" value={formKeluar.mekanik} onChange={e => setFormKeluar({...formKeluar, mekanik: e.target.value})} placeholder="Endang"/></div>
+                    <div><label className="block font-semibold mb-1">Kode Barang</label><input type="text" placeholder="SC081" required className="w-full p-2 border rounded-lg dark:bg-slate-900 dark:border-slate-700" value={formKeluar.kode} onChange={e => setFormKeluar({...formKeluar, kode: e.target.value})}/></div>
+                    <div><label className="block font-semibold mb-1">Mekanik</label><input type="text" placeholder="Endang" className="w-full p-2 border rounded-lg dark:bg-slate-900 dark:border-slate-700" value={formKeluar.mekanik} onChange={e => setFormKeluar({...formKeluar, mekanik: e.target.value})}/></div>
                   </div>
-                  <div><label className="block font-semibold mb-1">Nama Barang</label><input type="text" required className="w-full p-2 border rounded-lg dark:bg-slate-900 dark:border-slate-700" value={formKeluar.namaBarang} onChange={e => setFormKeluar({...formKeluar, namaBarang: e.target.value})} placeholder="SPRING BELAKANG"/></div>
+                  <div><label className="block font-semibold mb-1">Nama Barang</label><input type="text" placeholder="SPRING BELAKANG" required className="w-full p-2 border rounded-lg dark:bg-slate-900 dark:border-slate-700" value={formKeluar.namaBarang} onChange={e => setFormKeluar({...formKeluar, namaBarang: e.target.value})}/></div>
                   <div className="grid grid-cols-2 gap-2">
-                    <div><label className="block font-semibold mb-1">Qty Keluar</label><input type="number" required className="w-full p-2 border rounded-lg dark:bg-slate-900 dark:border-slate-700" value={formKeluar.qty} onChange={e => setFormKeluar({...formKeluar, qty: e.target.value})} placeholder="1"/></div>
-                    <div><label className="block font-semibold mb-1">Keterangan</label><input type="text" className="w-full p-2 border rounded-lg dark:bg-slate-900 dark:border-slate-700" value={formKeluar.keterangan} onChange={e => setFormKeluar({...formKeluar, keterangan: e.target.value})} placeholder="Rusak / Ganti"/></div>
+                    <div><label className="block font-semibold mb-1">Qty Keluar</label><input type="number" placeholder="1" required className="w-full p-2 border rounded-lg dark:bg-slate-900 dark:border-slate-700" value={formKeluar.qty} onChange={e => setFormKeluar({...formKeluar, qty: e.target.value})}/></div>
+                    <div><label className="block font-semibold mb-1">Keterangan</label><input type="text" placeholder="Rusak / Ganti" className="w-full p-2 border rounded-lg dark:bg-slate-900 dark:border-slate-700" value={formKeluar.keterangan} onChange={e => setFormKeluar({...formKeluar, keterangan: e.target.value})}/></div>
                   </div>
                   <div className="flex justify-end gap-2 mt-4 pt-2 border-t"><button type="button" onClick={() => setShowModalKeluar(false)} className="px-4 py-2 border rounded-lg">Batal</button><button type="submit" className="px-4 py-2 bg-amber-600 hover:bg-amber-700 text-white font-semibold rounded-lg">Simpan</button></div>
                 </form>
