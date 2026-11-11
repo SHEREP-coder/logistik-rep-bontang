@@ -1,9 +1,10 @@
 import React, { useState, useEffect, useRef } from 'react';
-import * as XLSX from 'xlsx';
+import * => as XLSX from 'xlsx'; // Dipakai untuk export
+import * as XLSXLib from 'xlsx';
 import { 
   Search, Plus, LayoutDashboard, Box, ArrowDownToLine, ArrowUpFromLine, 
   FileText, ClipboardList, BookOpen, BarChart3, Users, Settings, 
-  Moon, TrendingUp, TrendingDown, Calendar, X, Download, UserPlus, Sliders, Trash2, AlertTriangle, ShoppingCart, Barcode, Printer
+  Moon, TrendingUp, TrendingDown, Calendar, X, Download, UserPlus, Sliders, Trash2, AlertTriangle, ShoppingCart, Barcode, Printer, CheckSquare, History
 } from 'lucide-react';
 
 import { initializeApp } from "firebase/app";
@@ -39,6 +40,7 @@ export default function App() {
   const [dataMaterial, setDataMaterial] = useState([]);
   const [dataMasuk, setDataMasuk] = useState([]);
   const [dataKeluar, setDataKeluar] = useState([]);
+  const [riwayatPo, setRiwayatPo] = useState([]); // Database arsip PO yang sudah diprint
   const [selectedItemCode, setSelectedItemCode] = useState("");
   const [physicalStocks, setPhysicalStocks] = useState({});
 
@@ -54,19 +56,27 @@ export default function App() {
   const [showModalMasuk, setShowModalMasuk] = useState(false);
   const [showModalKeluar, setShowModalKeluar] = useState(false);
 
-  // Form dengan tambahan Stok Minimum dan Lokasi
   const [formMaterial, setFormMaterial] = useState({ kode: '', nama: '', nomor: '', unit: 'Ea', lokasi: 'Rak A1', minQty: 5, qty: 0 });
   const [formMasuk, setFormMasuk] = useState({ tanggal: '', unit: '', kode: '', description: '', merk: '', qty: 0, satuan: 'Pcs', noPo: '' });
   const [formKeluar, setFormKeluar] = useState({ tanggal: '', unit: '', kode: '', namaBarang: '', mekanik: '', qty: 0, keterangan: '' });
+
+  // State untuk Form Pembuatan PO Khas Blangko PT. REP
+  const [poHeader, setPoHeader] = useState({
+    noPo: "A " + Math.floor(100000 + Math.random() * 900000),
+    equipment: "VOLVO FMX 420",
+    kodeAlat: "DT-01",
+    lokasi: "Site Bontang",
+    tanggal: new Date().toISOString().split('T')[0],
+    dibuatOleh: "Administrator PT. REP"
+  });
+  const [poItems, setPoItems] = useState([
+    { id: 1, uraian: '', partNumber: '', qty: 1, unitPrice: 0, keterangan: '' }
+  ]);
 
   const [pageMaterial, setPageMaterial] = useState(1);
   const [pageMasuk, setPageMasuk] = useState(1);
   const [pageKeluar, setPageKeluar] = useState(1);
   const rowsPerPage = 20;
-
-  // Ref untuk scan barcode otomatis pada input
-  const barcodeMasukRef = useRef(null);
-  const barcodeKeluarRef = useRef(null);
 
   useEffect(() => {
     const fetchDataFromCloud = async () => {
@@ -81,25 +91,22 @@ export default function App() {
         const querySnapshotKeluar = await getDocs(collection(db, "barangKeluar"));
         const keluarList = querySnapshotKeluar.docs.map(doc => ({ id: doc.id, ...doc.data() }));
 
+        const querySnapshotPo = await getDocs(collection(db, "riwayatPo"));
+        const poList = querySnapshotPo.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+
         if (matList.length === 0) {
           const response = await fetch('/BACKLOG_LOGISTIK_2026_update (1).xlsx');
           const arrayBuffer = await response.arrayBuffer();
-          const workbook = XLSX.read(arrayBuffer, { type: 'array' });
+          const workbook = XLSXLib.read(arrayBuffer, { type: 'array' });
           
-          let mat = workbook.Sheets['MATERIAL'] ? XLSX.utils.sheet_to_json(workbook.Sheets['MATERIAL']) : [];
-          // Set default Lokasi & Min Qty untuk data awal
+          let mat = workbook.Sheets['MATERIAL'] ? XLSXLib.utils.sheet_to_json(workbook.Sheets['MATERIAL']) : [];
           mat = mat.map(item => ({ 
             ...item, 
             Lokasi: item.Lokasi || 'Rak A1', 
             MinQty: item.MinQty !== undefined ? Number(item.MinQty) : 5 
           }));
           
-          let masuk = workbook.Sheets['Barang Masuk'] ? XLSX.utils.sheet_to_json(workbook.Sheets['Barang Masuk']) : [];
-          let keluar = workbook.Sheets['Barang Keluar'] ? XLSX.utils.sheet_to_json(workbook.Sheets['Barang Keluar'], { range: 1 }) : [];
-
           setDataMaterial(mat);
-          setDataMasuk(masuk);
-          setDataKeluar(keluar);
         } else {
           matList = matList.map(item => ({ 
             ...item, 
@@ -109,6 +116,7 @@ export default function App() {
           setDataMaterial(matList);
           setDataMasuk(masukList);
           setDataKeluar(keluarList);
+          setRiwayatPo(poList);
         }
       } catch (error) {
         console.error("Gagal memuat data:", error);
@@ -117,31 +125,6 @@ export default function App() {
     };
     fetchDataFromCloud();
   }, []);
-
-  // Fungsi saat Barcode di-scan pada Stok Masuk
-  const handleBarcodeMasukScan = (kodeScan) => {
-    const found = dataMaterial.find(m => m.Kode?.toLowerCase() === kodeScan.toLowerCase());
-    if (found) {
-      setFormMasuk(prev => ({
-        ...prev,
-        kode: found.Kode,
-        description: found['Nama Barang'] || '',
-        merk: found['Nomor Barang'] || ''
-      }));
-    }
-  };
-
-  // Fungsi saat Barcode di-scan pada Stok Keluar
-  const handleBarcodeKeluarScan = (kodeScan) => {
-    const found = dataMaterial.find(m => m.Kode?.toLowerCase() === kodeScan.toLowerCase());
-    if (found) {
-      setFormKeluar(prev => ({
-        ...prev,
-        kode: found.Kode,
-        namaBarang: found['Nama Barang'] || ''
-      }));
-    }
-  };
 
   const handleAddMaterial = async (e) => {
     e.preventDefault();
@@ -172,18 +155,10 @@ export default function App() {
     try {
       await addDoc(collection(db, "barangMasuk"), newItem);
       setDataMasuk([newItem, ...dataMasuk]);
-      
-      // Update otomatis stok master barang bertambah
-      setDataMaterial(dataMaterial.map(m => {
-        if (m.Kode?.toLowerCase() === formMasuk.kode.toLowerCase()) {
-          return { ...m, Qty: Number(m.Qty || 0) + Number(formMasuk.qty) };
-        }
-        return m;
-      }));
-
+      setDataMaterial(dataMaterial.map(m => m.Kode?.toLowerCase() === formMasuk.kode.toLowerCase() ? { ...m, Qty: Number(m.Qty || 0) + Number(formMasuk.qty) } : m));
       setShowModalMasuk(false);
       setFormMasuk({ tanggal: '', unit: '', kode: '', description: '', merk: '', qty: 0, satuan: 'Pcs', noPo: '' });
-      alert("Stok Masuk berhasil dicatat & stok bertambah!");
+      alert("Stok Masuk berhasil dicatat!");
     } catch (error) { alert("Gagal."); }
   };
 
@@ -194,42 +169,63 @@ export default function App() {
     try {
       await addDoc(collection(db, "barangKeluar"), newItem);
       setDataKeluar([newItem, ...dataKeluar]);
-
-      // Update otomatis stok master barang berkurang
-      setDataMaterial(dataMaterial.map(m => {
-        if (m.Kode?.toLowerCase() === formKeluar.kode.toLowerCase()) {
-          return { ...m, Qty: Math.max(0, Number(m.Qty || 0) - Number(formKeluar.qty)) };
-        }
-        return m;
-      }));
-
+      setDataMaterial(dataMaterial.map(m => m.Kode?.toLowerCase() === formKeluar.kode.toLowerCase() ? { ...m, Qty: Math.max(0, Number(m.Qty || 0) - Number(formKeluar.qty)) } : m));
       setShowModalKeluar(false);
       setFormKeluar({ tanggal: '', unit: '', kode: '', namaBarang: '', mekanik: '', qty: 0, keterangan: '' });
-      alert("Stok Keluar berhasil dicatat & stok berkurang!");
+      alert("Stok Keluar berhasil dicatat!");
     } catch (error) { alert("Gagal."); }
   };
 
-  const handleAddUser = (e) => {
-    e.preventDefault();
-    if (currentUser.role !== 'Admin') return alert("Hanya Admin!");
-    const newUser = { id: String(Date.now()), nama: formUser.nama, username: formUser.username, role: formUser.role, site: "Bontang", status: "Aktif" };
-    setDaftarPengguna([...daftarPengguna, newUser]);
-    setShowModalUser(false);
-    setFormUser({ nama: '', username: '', role: 'Editor' });
-    alert("Pengguna ditambahkan!");
+  // Fungsi tambah baris manual pada lembar PO
+  const handleAddPoRow = () => {
+    setPoItems([...poItems, { id: Date.now(), uraian: '', partNumber: '', qty: 1, unitPrice: 0, keterangan: '' }]);
   };
 
-  const handleDeleteUser = (id) => {
-    if (currentUser.role !== 'Admin') return alert("Hanya Admin!");
-    if (confirm("Hapus pengguna ini?")) setDaftarPengguna(daftarPengguna.filter(u => u.id !== id));
+  const handleRemovePoRow = (id) => {
+    if (poItems.length === 1) return alert("Minimal harus ada 1 baris item PO.");
+    setPoItems(poItems.filter(item => item.id !== id));
+  };
+
+  // Masukkan item dari daftar stok menipis otomatis ke form PO
+  const handleImportLowStockToPo = () => {
+    const lowItems = dataMaterial.filter(item => Number(item.Qty || 0) <= Number(item.MinQty || 5));
+    if (lowItems.length === 0) return alert("Tidak ada barang dengan stok menipis saat ini.");
+    
+    const mapped = lowItems.map((item, idx) => ({
+      id: Date.now() + idx,
+      uraian: item['Nama Barang'] || '',
+      partNumber: item['Nomor Barang'] || item.Kode || '',
+      qty: (Number(item.MinQty || 5) * 2) - Number(item.Qty || 0),
+      unitPrice: 0,
+      keterangan: `Stok sisa: ${item.Qty} (Min: ${item.MinQty})`
+    }));
+    setPoItems(mapped);
+    alert("Berhasil memuat item stok menipis ke lembar PO!");
+  };
+
+  // Simpan & Print PO ke Database
+  const handleSaveAndPrintPo = async () => {
+    const newPoDoc = {
+      ...poHeader,
+      items: poItems,
+      createdAt: new Date().toISOString()
+    };
+    try {
+      const docRef = await addDoc(collection(db, "riwayatPo"), newPoDoc);
+      setRiwayatPo([{ id: docRef.id, ...newPoDoc }, ...riwayatPo]);
+      window.print();
+    } catch (e) {
+      console.error(e);
+      window.print(); // Tetap print walau offline
+    }
   };
 
   const exportToExcel = () => {
-    const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(dataMaterial), "MATERIAL");
-    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(dataMasuk), "Barang Masuk");
-    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(dataKeluar), "Barang Keluar");
-    XLSX.writeFile(wb, "BACKLOG_LOGISTIK_REP_UPDATE.xlsx");
+    const wb = XLSXLib.utils.book_new();
+    XLSXLib.utils.book_append_sheet(wb, XLSXLib.utils.json_to_sheet(dataMaterial), "MATERIAL");
+    XLSXLib.utils.book_append_sheet(wb, XLSXLib.utils.json_to_sheet(dataMasuk), "Barang Masuk");
+    XLSXLib.utils.book_append_sheet(wb, XLSXLib.utils.json_to_sheet(dataKeluar), "Barang Keluar");
+    XLSXLib.writeFile(wb, "BACKLOG_LOGISTIK_REP_UPDATE.xlsx");
   };
 
   const parseExcelDate = (serial) => {
@@ -262,26 +258,20 @@ export default function App() {
   const filteredMasuk = dataMasuk.filter(item => (item.Description?.toLowerCase().includes(pencarian.toLowerCase()) || item.Kode?.toLowerCase().includes(pencarian.toLowerCase())) && matchesMonthYear(item.Tanggal));
   const filteredKeluar = dataKeluar.filter(item => (item['Nama Barang']?.toLowerCase().includes(pencarian.toLowerCase()) || item.Kode?.toLowerCase().includes(pencarian.toLowerCase())) && matchesMonthYear(item['Doc.Date']));
 
-  // Barang yang stoknya di bawah atau sama dengan batas MinQty
   const poNeededItems = dataMaterial.filter(item => Number(item.Qty || 0) <= Number(item.MinQty || 5));
 
   const paginatedMaterial = filteredMaterial.slice((pageMaterial - 1) * rowsPerPage, pageMaterial * rowsPerPage);
-  const paginatedMasuk = filteredMasuk.slice((pageMasuk - 1) * rowsPerPage, pageMasuk * rowsPerPage);
-  const paginatedKeluar = filteredKeluar.slice((pageKeluar - 1) * rowsPerPage, pageKeluar * rowsPerPage);
-
   const totalPageMaterial = Math.ceil(filteredMaterial.length / rowsPerPage) || 1;
-  const totalPageMasuk = Math.ceil(filteredMasuk.length / rowsPerPage) || 1;
-  const totalPageKeluar = Math.ceil(filteredKeluar.length / rowsPerPage) || 1;
 
-  const inputClass = "w-full p-2 border border-slate-300 rounded-lg bg-white text-slate-900 placeholder-slate-400 focus:outline-none focus:border-blue-500 font-medium";
+  const inputClass = "w-full p-2 border border-slate-300 rounded-lg bg-white text-slate-900 placeholder-slate-400 focus:outline-none focus:border-blue-500 font-medium text-xs";
   const selectClass = "px-3 py-2 text-sm border border-slate-300 rounded-lg bg-white text-slate-900 font-medium";
   const searchClass = "w-full pl-9 pr-4 py-2 text-sm border border-slate-300 rounded-lg bg-white text-slate-900 focus:outline-none focus:border-blue-500 font-medium";
 
   return (
     <div className={`flex h-screen font-sans ${darkMode ? 'bg-slate-900 text-white' : 'bg-slate-50 text-slate-800'}`}>
       
-      {/* SIDEBAR */}
-      <div className={`w-72 flex flex-col border-r ${darkMode ? 'bg-slate-950 border-slate-800 text-slate-300' : 'bg-slate-900 border-slate-800 text-slate-300'}`}>
+      {/* SIDEBAR (Tersembunyi otomatis saat dicetak) */}
+      <div className={`w-72 flex flex-col border-r print:hidden ${darkMode ? 'bg-slate-950 border-slate-800 text-slate-300' : 'bg-slate-900 border-slate-800 text-slate-300'}`}>
         <div className="p-4 border-b border-slate-800 flex items-center gap-3 bg-slate-950">
           <div className="w-10 h-10 flex items-center justify-center">
             <img src="/logo_PT_REP_transparan.png" alt="Logo" className="w-full h-full object-contain filter drop-shadow-[0_2px_4px_rgba(0,0,0,0.5)]" />
@@ -298,7 +288,8 @@ export default function App() {
             { name: 'Master Barang', icon: Box },
             { name: 'Stok Masuk', icon: ArrowDownToLine },
             { name: 'Stok Keluar', icon: ArrowUpFromLine },
-            { name: 'Order PO', icon: ShoppingCart },
+            { name: 'Form & Cetak PO', icon: ShoppingCart },
+            { name: 'Arsip Database PO', icon: History },
             { name: 'Stok Opname', icon: ClipboardList },
             { name: 'Kartu Stok', icon: BookOpen },
             { name: 'Rekap Stok', icon: BarChart3 },
@@ -308,7 +299,7 @@ export default function App() {
           ].map((menu) => {
             const Icon = menu.icon;
             const isActive = activeTab === menu.name;
-            const isPoTab = menu.name === 'Order PO' && poNeededItems.length > 0;
+            const isPoTab = menu.name === 'Form & Cetak PO' && poNeededItems.length > 0;
             return (
               <button
                 key={menu.name}
@@ -340,10 +331,7 @@ export default function App() {
             <select 
               className="w-full p-1.5 rounded border text-xs border-slate-700 bg-white text-slate-900 font-medium"
               value={currentUser.role}
-              onChange={(e) => {
-                const r = e.target.value;
-                setCurrentUser({ ...currentUser, role: r, nama: r === 'Admin' ? 'Administrator PT. REP' : r === 'Editor' ? 'Staff Editor' : 'User Viewer' });
-              }}
+              onChange={(e) => setCurrentUser({ ...currentUser, role: e.target.value })}
             >
               <option value="Admin">Admin (Full Akses)</option>
               <option value="Editor">Editor (Input Data)</option>
@@ -363,7 +351,7 @@ export default function App() {
 
       {/* KONTEN UTAMA */}
       <div className="flex-1 flex flex-col overflow-hidden">
-        <header className={`p-4 border-b flex justify-between items-center shadow-sm ${darkMode ? 'bg-slate-900 border-slate-800' : 'bg-white border-slate-200'}`}>
+        <header className={`p-4 border-b flex justify-between items-center shadow-sm print:hidden ${darkMode ? 'bg-slate-900 border-slate-800' : 'bg-white border-slate-200'}`}>
           <div>
             <h1 className="text-xl font-bold flex items-center gap-2">
               {activeTab} 
@@ -415,61 +403,15 @@ export default function App() {
                   <div><p className="text-xs font-semibold text-slate-400 uppercase">Barang Keluar</p><h3 className="text-2xl font-bold mt-1 text-rose-600">{filteredKeluar.length} Trx</h3></div>
                   <div className="p-3 bg-rose-50 text-rose-600 rounded-xl"><TrendingDown size={24} /></div>
                 </div>
-                <div onClick={() => setActiveTab('Order PO')} className={`p-5 rounded-xl border shadow-sm flex items-center justify-between cursor-pointer hover:border-yellow-500 transition-all ${darkMode ? 'bg-slate-800 border-slate-700' : 'bg-white border-slate-200'}`}>
+                <div onClick={() => setActiveTab('Form & Cetak PO')} className={`p-5 rounded-xl border shadow-sm flex items-center justify-between cursor-pointer hover:border-yellow-500 transition-all ${darkMode ? 'bg-slate-800 border-slate-700' : 'bg-white border-slate-200'}`}>
                   <div><p className="text-xs font-semibold text-slate-400 uppercase">Wajib Order (PO)</p><h3 className="text-2xl font-bold mt-1 text-amber-500">{poNeededItems.length} Item</h3></div>
                   <div className="p-3 bg-amber-50 text-amber-600 rounded-xl"><ShoppingCart size={24} /></div>
                 </div>
               </div>
-
-              {/* TABEL PERINGATAN WAJIB ORDER PO DI DASHBOARD */}
-              <div className={`rounded-xl shadow-sm border overflow-hidden ${darkMode ? 'bg-slate-800 border-slate-700' : 'bg-white border-slate-200'}`}>
-                <div className="p-4 border-b flex items-center justify-between bg-amber-50 dark:bg-slate-900">
-                  <h3 className="font-bold text-xs uppercase tracking-wider text-amber-700 dark:text-amber-400 flex items-center gap-2">
-                    <AlertTriangle size={16} /> Perhatian: Material Mencapai Stok Minimum & Wajib Segera Di-Order (PO)
-                  </h3>
-                  <button onClick={() => setActiveTab('Order PO')} className="text-xs bg-yellow-500 text-slate-950 font-bold px-3 py-1 rounded-lg">
-                    Buka Lembar PO ➔
-                  </button>
-                </div>
-                <table className="w-full text-left text-xs">
-                  <thead className={`border-b font-semibold ${darkMode ? 'bg-slate-900 text-slate-400 border-slate-700' : 'bg-slate-50 text-slate-600 border-slate-200'}`}>
-                    <tr>
-                      <th className="p-3.5">KODE</th>
-                      <th className="p-3.5">NAMA BARANG</th>
-                      <th className="p-3.5">LOKASI RAK</th>
-                      <th className="p-3.5 text-center">STOK SAAT INI</th>
-                      <th className="p-3.5 text-center">BATAS MINIMUM</th>
-                      <th className="p-3.5 text-center">STATUS</th>
-                    </tr>
-                  </thead>
-                  <tbody className={`divide-y ${darkMode ? 'divide-slate-700' : 'divide-slate-100'}`}>
-                    {poNeededItems.length === 0 ? (
-                      <tr><td colSpan="6" className="p-6 text-center text-slate-400">Semua stok barang di atas batas minimum.</td></tr>
-                    ) : (
-                      poNeededItems.slice(0, 10).map((item, idx) => {
-                        const q = Number(item.Qty || 0);
-                        const minQ = Number(item.MinQty || 5);
-                        return (
-                          <tr key={idx} className={`hover:bg-opacity-50 ${darkMode ? 'hover:bg-slate-700' : 'hover:bg-slate-50'}`}>
-                            <td className="p-3.5 font-mono font-bold">{item.Kode || '-'}</td>
-                            <td className="p-3.5 font-semibold">{item['Nama Barang'] || '-'}</td>
-                            <td className="p-3.5"><span className="bg-yellow-100 text-yellow-800 px-2 py-0.5 rounded font-bold text-[10px]">{item.Lokasi || 'Rak A1'}</span></td>
-                            <td className="p-3.5 text-center font-bold text-rose-600 text-sm">{q}</td>
-                            <td className="p-3.5 text-center font-bold text-blue-600">{minQ}</td>
-                            <td className="p-3.5 text-center">
-                              {q === 0 ? <span className="bg-rose-100 text-rose-800 px-2 py-1 rounded font-bold text-[10px]">Habis</span> : <span className="bg-amber-100 text-amber-800 px-2 py-1 rounded font-bold text-[10px]">Di Bawah Min</span>}
-                            </td>
-                          </tr>
-                        );
-                      })
-                    )}
-                  </tbody>
-                </table>
-              </div>
             </div>
           )}
 
-          {/* MASTER BARANG (DENGAN KOLOM STOK MINIMUM & LOKASI) */}
+          {/* MASTER BARANG */}
           {activeTab === 'Master Barang' && (
             <div className="space-y-4">
               <div className={`p-4 rounded-xl shadow-sm border flex gap-3 items-center ${darkMode ? 'bg-slate-800 border-slate-700' : 'bg-white border-slate-200'}`}>
@@ -519,67 +461,219 @@ export default function App() {
                     )}
                   </tbody>
                 </table>
-
-                {/* PAGINATION */}
-                <div className={`p-4 border-t flex justify-between items-center text-xs ${darkMode ? 'border-slate-700 text-slate-300' : 'border-slate-200 text-slate-700'}`}>
-                  <span className="font-semibold">Halaman <span className="text-yellow-500 font-bold">{pageMaterial}</span> dari {totalPageMaterial} (Total: {filteredMaterial.length} Data)</span>
-                  <div className="flex gap-2">
-                    <button onClick={() => setPageMaterial(p => Math.max(p - 1, 1))} disabled={pageMaterial === 1} className="px-3 py-1.5 border rounded-lg bg-emerald-600 text-white font-bold disabled:opacity-40 shadow">◀ Sebelumnya</button>
-                    <button onClick={() => setPageMaterial(p => Math.min(p + 1, totalPageMaterial))} disabled={pageMaterial >= totalPageMaterial} className="px-3 py-1.5 border rounded-lg bg-emerald-600 text-white font-bold disabled:opacity-40 shadow">Berikutnya ▶</button>
-                  </div>
-                </div>
               </div>
             </div>
           )}
 
-          {/* LEMBAR ORDER PO KHUSUS YANG BISA DIPRINT */}
-          {activeTab === 'Order PO' && (
-            <div className="space-y-4">
-              <div className={`p-4 rounded-xl border shadow-sm flex justify-between items-center bg-yellow-50 dark:bg-slate-800 border-yellow-300`}>
-                <div>
-                  <h3 className="font-bold text-sm text-slate-900 dark:text-white flex items-center gap-2">
-                    <ShoppingCart size={18} className="text-yellow-600"/> Daftar Permintaan Pembelian (Purchase Order / PO)
-                  </h3>
-                  <p className="text-xs text-slate-600 dark:text-slate-300">Barang-barang di bawah ini telah mencapai batas stok minimum dan siap dicetak untuk pengajuan order.</p>
+          {/* FORM & CETAK PO (BLANGKO BIRU KHAS PT. REP) */}
+          {activeTab === 'Form & Cetak PO' && (
+            <div className="space-y-6">
+              {/* Panel Kontrol di Layar (Hilang saat Print) */}
+              <div className={`p-4 rounded-xl border shadow-sm flex flex-wrap justify-between items-center gap-3 print:hidden ${darkMode ? 'bg-slate-800 border-slate-700' : 'bg-white border-slate-200'}`}>
+                <div className="flex items-center gap-3">
+                  <button onClick={handleImportLowStockToPo} className="bg-amber-600 hover:bg-amber-700 text-white px-3 py-2 rounded-lg text-xs font-semibold flex items-center gap-1.5 shadow">
+                    <AlertTriangle size={15}/> Masukkan Otomatis Barang Menipis ({poNeededItems.length})
+                  </button>
+                  <button onClick={handleAddPoRow} className="bg-emerald-600 hover:bg-emerald-700 text-white px-3 py-2 rounded-lg text-xs font-semibold flex items-center gap-1.5 shadow">
+                    <Plus size={15}/> Tambah Baris Manual
+                  </button>
                 </div>
-                <button onClick={() => window.print()} className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg text-xs font-semibold flex items-center gap-2 shadow">
-                  <Printer size={16}/> Cetak / Print Lembar PO
+                <button onClick={handleSaveAndPrintPo} className="bg-blue-600 hover:bg-blue-700 text-white px-5 py-2.5 rounded-lg text-xs font-bold flex items-center gap-2 shadow-lg">
+                  <Printer size={16}/> Simpan ke Database & Cetak PO
                 </button>
+              </div>
+
+              {/* TAMPILAN BLANGKO FISIK PO BERGARIS BIRU (Persis Gambar Asli) */}
+              <div className="bg-white text-slate-900 p-8 rounded-xl shadow-xl border-4 border-blue-200 max-w-4xl mx-auto print:border-none print:shadow-none print:p-0 print:w-full">
+                
+                {/* Header Blangko */}
+                <div className="flex justify-between items-start border-b-2 border-blue-600 pb-4 mb-4">
+                  <div className="flex items-center gap-3">
+                    <div className="w-12 h-12 flex items-center justify-center bg-blue-900 rounded-lg text-white font-bold">REP</div>
+                    <div>
+                      <h2 className="text-sm font-extrabold tracking-wide text-blue-900">PT. RYAN EKA PRATAMA</h2>
+                      <p className="text-xs font-bold text-slate-600">BALIKPAPAN</p>
+                    </div>
+                  </div>
+                  <div className="text-center">
+                    <h1 className="text-lg font-black tracking-widest text-blue-900 underline uppercase">PURCHASE ORDER</h1>
+                  </div>
+                  <div className="text-right text-xs font-bold">
+                    <span className="text-slate-600">No. A </span>
+                    <input 
+                      type="text" 
+                      className="border border-blue-300 rounded px-2 py-1 w-28 text-center font-bold text-rose-600 print:border-none" 
+                      value={poHeader.noPo} 
+                      onChange={e => setPoHeader({...poHeader, noPo: e.target.value})}
+                    />
+                  </div>
+                </div>
+
+                {/* Informasi Atas PO */}
+                <div className="grid grid-cols-2 gap-x-8 gap-y-2 mb-6 text-xs font-bold text-blue-900">
+                  <div className="flex items-center gap-2">
+                    <span className="w-28">EQUIPMENT</span>: 
+                    <input type="text" className="flex-1 border-b border-blue-400 bg-transparent px-1 py-0.5 print:border-none" value={poHeader.equipment} onChange={e => setPoHeader({...poHeader, equipment: e.target.value})} />
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <span className="w-28">KODE ALAT</span>: 
+                    <input type="text" className="flex-1 border-b border-blue-400 bg-transparent px-1 py-0.5 print:border-none" value={poHeader.kodeAlat} onChange={e => setPoHeader({...poHeader, kodeAlat: e.target.value})} />
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <span className="w-28">LOKASI</span>: 
+                    <input type="text" className="flex-1 border-b border-blue-400 bg-transparent px-1 py-0.5 print:border-none" value={poHeader.lokasi} onChange={e => setPoHeader({...poHeader, lokasi: e.target.value})} />
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <span className="w-28">TANGGAL</span>: 
+                    <input type="date" className="flex-1 border-b border-blue-400 bg-transparent px-1 py-0.5 print:border-none" value={poHeader.tanggal} onChange={e => setPoHeader({...poHeader, tanggal: e.target.value})} />
+                  </div>
+                </div>
+
+                {/* Tabel Blangko Bergaris Biru */}
+                <div className="border-2 border-blue-500 rounded overflow-hidden mb-8">
+                  <table className="w-full text-left text-xs border-collapse">
+                    <thead>
+                      <tr className="bg-blue-600 text-white font-bold text-center border-b border-blue-500">
+                        <th className="p-2 border-r border-blue-400 w-12">NO</th>
+                        <th className="p-2 border-r border-blue-400">URAIAN</th>
+                        <th className="p-2 border-r border-blue-400 w-32">PART NUMBER</th>
+                        <th className="p-2 border-r border-blue-400 w-16">QTY</th>
+                        <th className="p-2 border-r border-blue-400 w-24">UNIT PRICE</th>
+                        <th className="p-2 border-r border-blue-400">KETERANGAN</th>
+                        <th className="p-2 w-10 print:hidden">AKSI</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-blue-200">
+                      {poItems.map((item, index) => (
+                        <tr key={item.id} className="hover:bg-blue-50/50">
+                          <td className="p-2 text-center font-bold border-r border-blue-200">{index + 1}</td>
+                          <td className="p-2 border-r border-blue-200">
+                            <input 
+                              type="text" 
+                              className="w-full bg-transparent focus:outline-none font-medium" 
+                              placeholder="Ketik nama barang / uraian..." 
+                              value={item.uraian} 
+                              onChange={e => {
+                                const val = e.target.value;
+                                setPoItems(poItems.map(i => i.id === item.id ? {...i, uraian: val} : i));
+                              }}
+                            />
+                          </td>
+                          <td className="p-2 border-r border-blue-200">
+                            <input 
+                              type="text" 
+                              className="w-full bg-transparent focus:outline-none font-mono" 
+                              placeholder="Part Number..." 
+                              value={item.partNumber} 
+                              onChange={e => {
+                                const val = e.target.value;
+                                setPoItems(poItems.map(i => i.id === item.id ? {...i, partNumber: val} : i));
+                              }}
+                            />
+                          </td>
+                          <td className="p-2 border-r border-blue-200 text-center">
+                            <input 
+                              type="number" 
+                              className="w-full text-center bg-transparent focus:outline-none font-bold text-blue-900" 
+                              value={item.qty} 
+                              onChange={e => {
+                                const val = Number(e.target.value);
+                                setPoItems(poItems.map(i => i.id === item.id ? {...i, qty: val} : i));
+                              }}
+                            />
+                          </td>
+                          <td className="p-2 border-r border-blue-200 text-right">
+                            <input 
+                              type="number" 
+                              className="w-full text-right bg-transparent focus:outline-none font-mono" 
+                              value={item.unitPrice} 
+                              onChange={e => {
+                                const val = Number(e.target.value);
+                                setPoItems(poItems.map(i => i.id === item.id ? {...i, unitPrice: val} : i));
+                              }}
+                            />
+                          </td>
+                          <td className="p-2 border-r border-blue-200">
+                            <input 
+                              type="text" 
+                              className="w-full bg-transparent focus:outline-none" 
+                              placeholder="Keterangan..." 
+                              value={item.keterangan} 
+                              onChange={e => {
+                                const val = e.target.value;
+                                setPoItems(poItems.map(i => i.id === item.id ? {...i, keterangan: val} : i));
+                              }}
+                            />
+                          </td>
+                          <td className="p-2 text-center print:hidden">
+                            <button onClick={() => handleRemovePoRow(item.id)} className="text-rose-600 hover:text-rose-800 font-bold">×</button>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+
+                {/* Tanda Tangan Bawah Blangko */}
+                <div className="grid grid-cols-2 gap-16 pt-4 text-xs font-bold text-center">
+                  <div className="space-y-16">
+                    <p className="text-left font-semibold underline">DIKETAHUI OLEH,</p>
+                    <div className="border-b border-slate-400 w-48 mx-auto"></div>
+                  </div>
+                  <div className="space-y-16">
+                    <p className="text-left font-semibold underline">DIBUAT OLEH,</p>
+                    <div>
+                      <input 
+                        type="text" 
+                        className="text-center font-bold border-b border-dashed border-slate-400 w-48 mx-auto bg-transparent print:border-none" 
+                        value={poHeader.dibuatOleh} 
+                        onChange={e => setPoHeader({...poHeader, dibuatOleh: e.target.value})}
+                      />
+                    </div>
+                  </div>
+                </div>
+
+              </div>
+            </div>
+          )}
+
+          {/* ARSIP DATABASE PO YANG SUDAH Dibuat */}
+          {activeTab === 'Arsip Database PO' && (
+            <div className="space-y-4">
+              <div className={`p-4 rounded-xl border shadow-sm flex justify-between items-center ${darkMode ? 'bg-slate-800 border-slate-700' : 'bg-white border-slate-200'}`}>
+                <div>
+                  <h3 className="font-bold text-sm">Arsip Database Purchase Order (PO)</h3>
+                  <p className="text-xs text-slate-400">Semua PO yang pernah dibuat dan dicetak tersimpan secara permanen di sini.</p>
+                </div>
+                <span className="bg-blue-100 text-blue-800 font-bold px-3 py-1 rounded-lg text-xs">Total Arsip: {riwayatPo.length} PO</span>
               </div>
 
               <div className={`rounded-xl shadow-sm border overflow-hidden ${darkMode ? 'bg-slate-800 border-slate-700' : 'bg-white border-slate-200'}`}>
                 <table className="w-full text-left text-xs">
                   <thead className={`border-b font-semibold ${darkMode ? 'bg-slate-900 text-slate-400 border-slate-700' : 'bg-slate-50 text-slate-600 border-slate-200'}`}>
                     <tr>
-                      <th className="p-3.5">NO</th>
-                      <th className="p-3.5">KODE / BARCODE</th>
-                      <th className="p-3.5">NAMA BARANG / PART</th>
-                      <th className="p-3.5">LOKASI RAK</th>
-                      <th className="p-3.5 text-center">STOK SEKARANG</th>
-                      <th className="p-3.5 text-center">MIN STOK</th>
-                      <th className="p-3.5 text-center">QTY REKOMENDASI ORDER</th>
+                      <th className="p-3.5">NO. PO</th>
+                      <th className="p-3.5">TANGGAL</th>
+                      <th className="p-3.5">EQUIPMENT / KODE</th>
+                      <th className="p-3.5">LOKASI</th>
+                      <th className="p-3.5">PEMBUAT</th>
+                      <th className="p-3.5 text-center">JUMLAH ITEM</th>
                     </tr>
                   </thead>
                   <tbody className={`divide-y ${darkMode ? 'divide-slate-700' : 'divide-slate-100'}`}>
-                    {poNeededItems.length === 0 ? (
-                      <tr><td colSpan="7" className="p-12 text-center text-slate-400">🎉 Luar biasa! Tidak ada barang yang memerlukan PO saat ini.</td></tr>
+                    {riwayatPo.length === 0 ? (
+                      <tr><td colSpan="6" className="p-8 text-center text-slate-400">Belum ada riwayat PO yang disimpan. Silakan buat PO baru dan klik cetak.</td></tr>
                     ) : (
-                      poNeededItems.map((item, index) => {
-                        const cur = Number(item.Qty || 0);
-                        const min = Number(item.MinQty || 5);
-                        const recommendedOrder = (min * 2) - cur; // Rumus rekomendasi order
-                        return (
-                          <tr key={index}>
-                            <td className="p-3.5 font-bold">{index + 1}</td>
-                            <td className="p-3.5 font-mono font-bold text-blue-600">{item.Kode}</td>
-                            <td className="p-3.5 font-semibold">{item['Nama Barang'] || '-'}</td>
-                            <td className="p-3.5 font-bold">{item.Lokasi || 'Rak A1'}</td>
-                            <td className="p-3.5 text-center font-bold text-rose-600">{cur}</td>
-                            <td className="p-3.5 text-center font-bold text-slate-500">{min}</td>
-                            <td className="p-3.5 text-center font-bold text-emerald-600 bg-emerald-50 dark:bg-emerald-950/30">+{recommendedOrder} Unit</td>
-                          </tr>
-                        );
-                      })
+                      riwayatPo.map((po, idx) => (
+                        <tr key={idx} className={`hover:bg-opacity-50 ${darkMode ? 'hover:bg-slate-700' : 'hover:bg-slate-50'}`}>
+                          <td className="p-3.5 font-mono font-bold text-blue-600">No. {po.noPo}</td>
+                          <td className="p-3.5">{po.tanggal}</td>
+                          <td className="p-3.5 font-semibold">{po.equipment} ({po.kodeAlat})</td>
+                          <td className="p-3.5">{po.lokasi}</td>
+                          <td className="p-3.5">{po.dibuatOleh}</td>
+                          <td className="p-3.5 text-center font-bold text-emerald-600">{po.items?.length || 0} Item</td>
+                        </tr>
+                      ))
                     )}
                   </tbody>
                 </table>
@@ -601,7 +695,7 @@ export default function App() {
                     <tr><th className="p-3.5">TANGGAL</th><th className="p-3.5">KODE</th><th className="p-3.5">DESKRIPSI</th><th className="p-3.5">QTY</th></tr>
                   </thead>
                   <tbody className={`divide-y ${darkMode ? 'divide-slate-700' : 'divide-slate-100'}`}>
-                    {paginatedMasuk.map((item, index) => (
+                    {paginatedMasuk?.map((item, index) => (
                       <tr key={index}><td className="p-3.5">{formatTanggalExcel(item.Tanggal)}</td><td className="p-3.5 font-mono">{item.Kode}</td><td className="p-3.5">{item.Description}</td><td className="p-3.5 font-bold text-emerald-600">+{item.Qty}</td></tr>
                     ))}
                   </tbody>
@@ -624,7 +718,7 @@ export default function App() {
                     <tr><th className="p-3.5">TANGGAL</th><th className="p-3.5">KODE</th><th className="p-3.5">NAMA BARANG</th><th className="p-3.5">QTY</th></tr>
                   </thead>
                   <tbody className={`divide-y ${darkMode ? 'divide-slate-700' : 'divide-slate-100'}`}>
-                    {paginatedKeluar.map((item, index) => (
+                    {paginatedKeluar?.map((item, index) => (
                       <tr key={index}><td className="p-3.5">{formatTanggalExcel(item['Doc.Date'])}</td><td className="p-3.5 font-mono">{item.Kode}</td><td className="p-3.5">{item['Nama Barang']}</td><td className="p-3.5 font-bold text-rose-600">-{item.Qty}</td></tr>
                     ))}
                   </tbody>
@@ -670,14 +764,12 @@ export default function App() {
 
           {/* KARTU STOK */}
           {activeTab === 'Kartu Stok' && (
-            <div className="space-y-4">
-              <div className={`p-4 rounded-xl border shadow-sm flex items-center gap-4 ${darkMode ? 'bg-slate-800 border-slate-700' : 'bg-white border-slate-200'}`}>
-                <span className="text-xs font-semibold">Pilih Barang:</span>
-                <select value={selectedItemCode} onChange={(e) => setSelectedItemCode(e.target.value)} className={selectClass}>
-                  <option value="">-- Pilih Material --</option>
-                  {dataMaterial.map((m, idx) => (<option key={idx} value={m.Kode}>{m.Kode} - {m['Nama Barang']} (Lokasi: {m.Lokasi || 'Rak A1'})</option>))}
-                </select>
-              </div>
+            <div className={`p-4 rounded-xl border shadow-sm flex items-center gap-4 ${darkMode ? 'bg-slate-800 border-slate-700' : 'bg-white border-slate-200'}`}>
+              <span className="text-xs font-semibold">Pilih Barang:</span>
+              <select value={selectedItemCode} onChange={(e) => setSelectedItemCode(e.target.value)} className={selectClass}>
+                <option value="">-- Pilih Material --</option>
+                {dataMaterial.map((m, idx) => (<option key={idx} value={m.Kode}>{m.Kode} - {m['Nama Barang']} (Lokasi: {m.Lokasi || 'Rak A1'})</option>))}
+              </select>
             </div>
           )}
 
@@ -728,51 +820,38 @@ export default function App() {
             </div>
           )}
 
-          {/* MODAL INPUT: PRODUK BARU (DENGAN STOK MINIMUM & LOKASI) */}
+          {/* MODAL INPUT: PRODUK BARU */}
           {showModalMaterial && (
             <div className="fixed inset-0 bg-black bg-opacity-60 flex items-center justify-center z-50 p-4">
               <div className={`w-full max-w-lg p-6 rounded-xl shadow-2xl border ${darkMode ? 'bg-slate-800 border-slate-700 text-white' : 'bg-white border-slate-200 text-slate-800'}`}>
-                <div className="flex justify-between items-center mb-4 border-b pb-2"><h3 className="font-bold text-base">Tambah Produk Baru & Stok Minimum</h3><button onClick={() => setShowModalMaterial(false)}><X size={20}/></button></div>
+                <div className="flex justify-between items-center mb-4 border-b pb-2"><h3 className="font-bold text-base">Tambah Produk Baru</h3><button onClick={() => setShowModalMaterial(false)}><X size={20}/></button></div>
                 <form onSubmit={handleAddMaterial} className="space-y-3 text-xs">
-                  <div><label className="block font-semibold mb-1">Kode / Barcode Barang</label><input type="text" required className={inputClass} value={formMaterial.kode} onChange={e => setFormMaterial({...formMaterial, kode: e.target.value})} placeholder="Scan atau ketik kode barcode..."/></div>
+                  <div><label className="block font-semibold mb-1">Kode / Barcode</label><input type="text" required className={inputClass} value={formMaterial.kode} onChange={e => setFormMaterial({...formMaterial, kode: e.target.value})} placeholder="U198"/></div>
                   <div><label className="block font-semibold mb-1">Nama Barang</label><input type="text" required className={inputClass} value={formMaterial.nama} onChange={e => setFormMaterial({...formMaterial, nama: e.target.value})} placeholder="FILTER OLI CAT"/></div>
                   <div><label className="block font-semibold mb-1">Nomor Part</label><input type="text" className={inputClass} value={formMaterial.nomor} onChange={e => setFormMaterial({...formMaterial, nomor: e.target.value})} placeholder="1R-1808"/></div>
                   <div className="grid grid-cols-2 gap-2">
                     <div><label className="block font-semibold mb-1">Lokasi Rak / Yard</label><input type="text" required className={inputClass} value={formMaterial.lokasi} onChange={e => setFormMaterial({...formMaterial, lokasi: e.target.value})} placeholder="Rak A1"/></div>
-                    <div><label className="block font-semibold mb-1">Batas Stok Minimum (Peringatan PO)</label><input type="number" required className={inputClass} value={formMaterial.minQty} onChange={e => setFormMaterial({...formMaterial, minQty: e.target.value})} placeholder="5"/></div>
+                    <div><label className="block font-semibold mb-1">Batas Stok Minimum</label><input type="number" required className={inputClass} value={formMaterial.minQty} onChange={e => setFormMaterial({...formMaterial, minQty: e.target.value})} placeholder="5"/></div>
                   </div>
                   <div className="grid grid-cols-2 gap-2">
                     <div><label className="block font-semibold mb-1">Part Unit</label><input type="text" className={inputClass} value={formMaterial.unit} onChange={e => setFormMaterial({...formMaterial, unit: e.target.value})} placeholder="Ea"/></div>
                     <div><label className="block font-semibold mb-1">Qty Awal</label><input type="number" required className={inputClass} value={formMaterial.qty} onChange={e => setFormMaterial({...formMaterial, qty: e.target.value})} placeholder="0"/></div>
                   </div>
-                  <div className="flex justify-end gap-2 mt-4 pt-2 border-t"><button type="button" onClick={() => setShowModalMaterial(false)} className="px-4 py-2 border rounded-lg">Batal</button><button type="submit" className="px-4 py-2 bg-emerald-600 text-white font-semibold rounded-lg">Simpan Produk</button></div>
+                  <div className="flex justify-end gap-2 mt-4 pt-2 border-t"><button type="button" onClick={() => setShowModalMaterial(false)} className="px-4 py-2 border rounded-lg">Batal</button><button type="submit" className="px-4 py-2 bg-emerald-600 text-white font-semibold rounded-lg">Simpan</button></div>
                 </form>
               </div>
             </div>
           )}
 
-          {/* MODAL INPUT: STOK MASUK (DENGAN SCAN BARCODE) */}
+          {/* MODAL INPUT: STOK MASUK */}
           {showModalMasuk && (
             <div className="fixed inset-0 bg-black bg-opacity-60 flex items-center justify-center z-50 p-4">
               <div className={`w-full max-w-lg p-6 rounded-xl shadow-2xl border ${darkMode ? 'bg-slate-800 border-slate-700 text-white' : 'bg-white border-slate-200 text-slate-800'}`}>
-                <div className="flex justify-between items-center mb-4 border-b pb-2">
-                  <h3 className="font-bold text-base flex items-center gap-1.5"><Barcode size={18} className="text-blue-500"/> Scan / Input Stok Masuk</h3>
-                  <button onClick={() => setShowModalMasuk(false)}><X size={20}/></button>
-                </div>
+                <div className="flex justify-between items-center mb-4 border-b pb-2"><h3 className="font-bold text-base">Stok Masuk</h3><button onClick={() => setShowModalMasuk(false)}><X size={20}/></button></div>
                 <form onSubmit={handleAddMasuk} className="space-y-3 text-xs">
-                  <div>
-                    <label className="block font-semibold mb-1 text-blue-600">Scan Barcode / Ketik Kode Barang:</label>
-                    <input 
-                      type="text" 
-                      ref={barcodeMasukRef}
-                      className="w-full p-2.5 border-2 border-blue-500 rounded-lg bg-blue-50 text-slate-900 font-bold placeholder-blue-300 focus:outline-none" 
-                      placeholder="Arahkan scanner ke barcode atau ketik kode lalu Enter..."
-                      onChange={(e) => handleBarcodeMasukScan(e.target.value)}
-                    />
-                  </div>
                   <div className="grid grid-cols-2 gap-2">
                     <div><label className="block font-semibold mb-1">Tanggal</label><input type="date" required className={inputClass} value={formMasuk.tanggal} onChange={e => setFormMasuk({...formMasuk, tanggal: e.target.value})}/></div>
-                    <div><label className="block font-semibold mb-1">Unit</label><input type="text" required className={inputClass} value={formMasuk.unit} onChange={e => setFormMasuk({...formMasuk, unit: e.target.value})} placeholder="REP 110"/></div>
+                    <div><label className="block font-semibold mb-1">Unit</label><input type="text" required className={inputClass} value={formMasuk.unit} onChange={e => setFormMasuk({...formMasuk, unit: e.target.value})}/></div>
                   </div>
                   <div className="grid grid-cols-2 gap-2">
                     <div><label className="block font-semibold mb-1">Kode Barang</label><input type="text" required className={inputClass} value={formMasuk.kode} onChange={e => setFormMasuk({...formMasuk, kode: e.target.value})}/></div>
@@ -784,45 +863,32 @@ export default function App() {
                     <div><label className="block font-semibold mb-1">Satuan</label><input type="text" required className={inputClass} value={formMasuk.satuan} onChange={e => setFormMasuk({...formMasuk, satuan: e.target.value})}/></div>
                     <div><label className="block font-semibold mb-1">No. PO</label><input type="text" className={inputClass} value={formMasuk.noPo} onChange={e => setFormMasuk({...formMasuk, noPo: e.target.value})}/></div>
                   </div>
-                  <div className="flex justify-end gap-2 mt-4 pt-2 border-t"><button type="button" onClick={() => setShowModalMasuk(false)} className="px-4 py-2 border rounded-lg">Batal</button><button type="submit" className="px-4 py-2 bg-blue-600 text-white font-semibold rounded-lg">Simpan Stok Masuk</button></div>
+                  <div className="flex justify-end gap-2 mt-4 pt-2 border-t"><button type="button" onClick={() => setShowModalMasuk(false)} className="px-4 py-2 border rounded-lg">Batal</button><button type="submit" className="px-4 py-2 bg-blue-600 text-white font-semibold rounded-lg">Simpan</button></div>
                 </form>
               </div>
             </div>
           )}
 
-          {/* MODAL INPUT: STOK KELUAR (DENGAN SCAN BARCODE) */}
+          {/* MODAL INPUT: STOK KELUAR */}
           {showModalKeluar && (
             <div className="fixed inset-0 bg-black bg-opacity-60 flex items-center justify-center z-50 p-4">
               <div className={`w-full max-w-lg p-6 rounded-xl shadow-2xl border ${darkMode ? 'bg-slate-800 border-slate-700 text-white' : 'bg-white border-slate-200 text-slate-800'}`}>
-                <div className="flex justify-between items-center mb-4 border-b pb-2">
-                  <h3 className="font-bold text-base flex items-center gap-1.5"><Barcode size={18} className="text-amber-500"/> Scan / Input Stok Keluar</h3>
-                  <button onClick={() => setShowModalKeluar(false)}><X size={20}/></button>
-                </div>
+                <div className="flex justify-between items-center mb-4 border-b pb-2"><h3 className="font-bold text-base">Stok Keluar</h3><button onClick={() => setShowModalKeluar(false)}><X size={20}/></button></div>
                 <form onSubmit={handleAddKeluar} className="space-y-3 text-xs">
-                  <div>
-                    <label className="block font-semibold mb-1 text-amber-600">Scan Barcode / Ketik Kode Barang:</label>
-                    <input 
-                      type="text" 
-                      ref={barcodeKeluarRef}
-                      className="w-full p-2.5 border-2 border-amber-500 rounded-lg bg-amber-50 text-slate-900 font-bold placeholder-amber-300 focus:outline-none" 
-                      placeholder="Arahkan scanner ke barcode atau ketik kode lalu Enter..."
-                      onChange={(e) => handleBarcodeKeluarScan(e.target.value)}
-                    />
-                  </div>
                   <div className="grid grid-cols-2 gap-2">
                     <div><label className="block font-semibold mb-1">Tanggal</label><input type="date" required className={inputClass} value={formKeluar.tanggal} onChange={e => setFormKeluar({...formKeluar, tanggal: e.target.value})}/></div>
-                    <div><label className="block font-semibold mb-1">Unit</label><input type="text" required className={inputClass} value={formKeluar.unit} onChange={e => setFormKeluar({...formKeluar, unit: e.target.value})} placeholder="REP 110"/></div>
+                    <div><label className="block font-semibold mb-1">Unit</label><input type="text" required className={inputClass} value={formKeluar.unit} onChange={e => setFormKeluar({...formKeluar, unit: e.target.value})}/></div>
                   </div>
                   <div className="grid grid-cols-2 gap-2">
                     <div><label className="block font-semibold mb-1">Kode Barang</label><input type="text" required className={inputClass} value={formKeluar.kode} onChange={e => setFormKeluar({...formKeluar, kode: e.target.value})}/></div>
-                    <div><label className="block font-semibold mb-1">Mekanik</label><input type="text" className={inputClass} value={formKeluar.mekanik} onChange={e => setFormKeluar({...formKeluar, mekanik: e.target.value})} placeholder="Endang"/></div>
+                    <div><label className="block font-semibold mb-1">Mekanik</label><input type="text" className={inputClass} value={formKeluar.mekanik} onChange={e => setFormKeluar({...formKeluar, mekanik: e.target.value})}/></div>
                   </div>
                   <div><label className="block font-semibold mb-1">Nama Barang</label><input type="text" required className={inputClass} value={formKeluar.namaBarang} onChange={e => setFormKeluar({...formKeluar, namaBarang: e.target.value})}/></div>
                   <div className="grid grid-cols-2 gap-2">
                     <div><label className="block font-semibold mb-1">Qty Keluar</label><input type="number" required className={inputClass} value={formKeluar.qty} onChange={e => setFormKeluar({...formKeluar, qty: e.target.value})}/></div>
-                    <div><label className="block font-semibold mb-1">Keterangan</label><input type="text" className={inputClass} value={formKeluar.keterangan} onChange={e => setFormKeluar({...formKeluar, keterangan: e.target.value})} placeholder="Ganti / Rusak"/></div>
+                    <div><label className="block font-semibold mb-1">Keterangan</label><input type="text" className={inputClass} value={formKeluar.keterangan} onChange={e => setFormKeluar({...formKeluar, keterangan: e.target.value})}/></div>
                   </div>
-                  <div className="flex justify-end gap-2 mt-4 pt-2 border-t"><button type="button" onClick={() => setShowModalKeluar(false)} className="px-4 py-2 border rounded-lg">Batal</button><button type="submit" className="px-4 py-2 bg-amber-600 text-white font-semibold rounded-lg">Simpan Stok Keluar</button></div>
+                  <div className="flex justify-end gap-2 mt-4 pt-2 border-t"><button type="button" onClick={() => setShowModalKeluar(false)} className="px-4 py-2 border rounded-lg">Batal</button><button type="submit" className="px-4 py-2 bg-amber-600 text-white font-semibold rounded-lg">Simpan</button></div>
                 </form>
               </div>
             </div>
