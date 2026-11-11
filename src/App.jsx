@@ -684,7 +684,7 @@ export default function App() {
                             <input 
                               type="number" 
                               disabled={currentUser.role === 'Viewer'}
-                              className={`w-24 p-1 text-center border rounded font-bold ${darkMode ? 'bg-slate-900 border-slate-700 text-white' : 'bg-slate-50 border-slate-300'} ${currentUser.role === 'Viewer' ? 'opacity-50 cursor-not-allowed' : ''}`}
+                              className={`w-24 p-1 text-center border rounded font-bold ${darkMode ? 'bg-slate-900 border-slate-700 text-white' : 'bg-slate-50 border-slate-300 text-slate-900'} ${currentUser.role === 'Viewer' ? 'opacity-50 cursor-not-allowed' : ''}`}
                               value={physicalStocks[kode] !== undefined ? physicalStocks[kode] : stokSistem}
                               onChange={(e) => setPhysicalStocks({...physicalStocks, [kode]: e.target.value})}
                             />
