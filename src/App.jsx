@@ -7,7 +7,6 @@ import {
 } from 'lucide-react';
 
 import { initializeApp } from "firebase/app";
-import { getAnalytics } from "firebase/analytics";
 import { getFirestore, collection, getDocs, addDoc } from "firebase/firestore";
 
 const firebaseConfig = {
@@ -21,7 +20,6 @@ const firebaseConfig = {
 };
 
 const app = initializeApp(firebaseConfig);
-const analytics = getAnalytics(app);
 const db = getFirestore(app);
 
 export default function App() {
@@ -203,12 +201,10 @@ export default function App() {
   const totalPageMasuk = Math.ceil(filteredMasuk.length / rowsPerPage);
   const totalPageKeluar = Math.ceil(filteredKeluar.length / rowsPerPage);
 
-  // ====================================================================================
-  // KELAS INPUT PERMANEN: BACKGROUND PUTIH & TEKS HITAM/GELAP (TIDAK PEDULI DARK MODE)
-  // ====================================================================================
-  const inputClass = "w-full p-2 border border-slate-300 rounded-lg bg-white text-slate-900 placeholder-slate-400 focus:outline-none focus:border-blue-500";
-  const selectClass = "px-3 py-2 text-sm border border-slate-300 rounded-lg bg-white text-slate-900";
-  const searchClass = "w-full pl-9 pr-4 py-2 text-sm border border-slate-300 rounded-lg bg-white text-slate-900 focus:outline-none focus:border-blue-500";
+  // KELAS INPUT: Background Putih & Teks Hitam Tegas
+  const inputClass = "w-full p-2 border border-slate-300 rounded-lg bg-white text-slate-900 placeholder-slate-400 focus:outline-none focus:border-blue-500 font-medium";
+  const selectClass = "px-3 py-2 text-sm border border-slate-300 rounded-lg bg-white text-slate-900 font-medium";
+  const searchClass = "w-full pl-9 pr-4 py-2 text-sm border border-slate-300 rounded-lg bg-white text-slate-900 focus:outline-none focus:border-blue-500 font-medium";
 
   return (
     <div className={`flex h-screen font-sans ${darkMode ? 'bg-slate-900 text-white' : 'bg-slate-50 text-slate-800'}`}>
@@ -262,7 +258,7 @@ export default function App() {
           <div className="px-3 py-2 bg-slate-950 rounded-lg border border-slate-800 text-xs space-y-1">
             <p className="text-[10px] text-slate-400">Simulasi Mode Akun:</p>
             <select 
-              className="w-full p-1.5 rounded border text-xs border-slate-700 bg-white text-slate-900"
+              className="w-full p-1.5 rounded border text-xs border-slate-700 bg-white text-slate-900 font-medium"
               value={currentUser.role}
               onChange={(e) => {
                 const r = e.target.value;
@@ -444,9 +440,7 @@ export default function App() {
             </div>
           )}
 
-          {/* ===================================================================== */}
-          {/* MODAL INPUT: TAMBAH PRODUK BARU */}
-          {/* ===================================================================== */}
+          {/* MODAL INPUT: PRODUK BARU */}
           {showModalMaterial && (
             <div className="fixed inset-0 bg-black bg-opacity-60 flex items-center justify-center z-50 p-4">
               <div className={`w-full max-w-lg p-6 rounded-xl shadow-2xl border ${darkMode ? 'bg-slate-800 border-slate-700 text-white' : 'bg-white border-slate-200 text-slate-800'}`}>
@@ -486,9 +480,7 @@ export default function App() {
             </div>
           )}
 
-          {/* ===================================================================== */}
           {/* MODAL INPUT: STOK MASUK */}
-          {/* ===================================================================== */}
           {showModalMasuk && (
             <div className="fixed inset-0 bg-black bg-opacity-60 flex items-center justify-center z-50 p-4">
               <div className={`w-full max-w-lg p-6 rounded-xl shadow-2xl border ${darkMode ? 'bg-slate-800 border-slate-700 text-white' : 'bg-white border-slate-200 text-slate-800'}`}>
@@ -520,9 +512,7 @@ export default function App() {
             </div>
           )}
 
-          {/* ===================================================================== */}
           {/* MODAL INPUT: STOK KELUAR */}
-          {/* ===================================================================== */}
           {showModalKeluar && (
             <div className="fixed inset-0 bg-black bg-opacity-60 flex items-center justify-center z-50 p-4">
               <div className={`w-full max-w-lg p-6 rounded-xl shadow-2xl border ${darkMode ? 'bg-slate-800 border-slate-700 text-white' : 'bg-white border-slate-200 text-slate-800'}`}>
@@ -553,9 +543,7 @@ export default function App() {
             </div>
           )}
 
-          {/* ===================================================================== */}
           {/* MODAL PENGGUNA BARU */}
-          {/* ===================================================================== */}
           {showModalUser && (
             <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
               <div className={`w-full max-w-md p-6 rounded-xl shadow-lg border ${darkMode ? 'bg-slate-800 border-slate-700 text-white' : 'bg-white border-slate-200 text-slate-800'}`}>
