@@ -55,7 +55,6 @@ export default function App() {
   const [showModalMasuk, setShowModalMasuk] = useState(false);
   const [showModalKeluar, setShowModalKeluar] = useState(false);
 
-  // Form Master Barang dengan tambahan Lokasi (Rak/Yard)
   const [formMaterial, setFormMaterial] = useState({ kode: '', nama: '', nomor: '', unit: 'Ea', lokasi: 'Rak A1', qty: 0 });
   const [formMasuk, setFormMasuk] = useState({ tanggal: '', unit: '', kode: '', description: '', merk: '', qty: 0, satuan: 'Pcs', noPo: '' });
   const [formKeluar, setFormKeluar] = useState({ tanggal: '', unit: '', kode: '', namaBarang: '', mekanik: '', qty: 0, keterangan: '' });
@@ -84,7 +83,6 @@ export default function App() {
           const workbook = XLSX.read(arrayBuffer, { type: 'array' });
           
           let mat = workbook.Sheets['MATERIAL'] ? XLSX.utils.sheet_to_json(workbook.Sheets['MATERIAL']) : [];
-          // Otomatis berikan default lokasi jika data dari excel belum punya kolom Lokasi
           mat = mat.map(item => ({ ...item, Lokasi: item.Lokasi || 'Rak A1' }));
           
           let masuk = workbook.Sheets['Barang Masuk'] ? XLSX.utils.sheet_to_json(workbook.Sheets['Barang Masuk']) : [];
@@ -94,7 +92,6 @@ export default function App() {
           setDataMasuk(masuk);
           setDataKeluar(keluar);
         } else {
-          // Pastikan properti Lokasi ada
           matList = matList.map(item => ({ ...item, Lokasi: item.Lokasi || 'Rak A1' }));
           setDataMaterial(matList);
           setDataMasuk(masukList);
@@ -208,16 +205,15 @@ export default function App() {
   const filteredMasuk = dataMasuk.filter(item => (item.Description?.toLowerCase().includes(pencarian.toLowerCase()) || item.Kode?.toLowerCase().includes(pencarian.toLowerCase())) && matchesMonthYear(item.Tanggal));
   const filteredKeluar = dataKeluar.filter(item => (item['Nama Barang']?.toLowerCase().includes(pencarian.toLowerCase()) || item.Kode?.toLowerCase().includes(pencarian.toLowerCase())) && matchesMonthYear(item['Doc.Date']));
 
-  // Filter Barang yang Stoknya Menipis (Qty <= 5) atau Habis (Qty === 0)
   const lowStockItems = dataMaterial.filter(item => Number(item.Qty || 0) <= 5);
 
   const paginatedMaterial = filteredMaterial.slice((pageMaterial - 1) * rowsPerPage, pageMaterial * rowsPerPage);
   const paginatedMasuk = filteredMasuk.slice((pageMasuk - 1) * rowsPerPage, pageMasuk * rowsPerPage);
   const paginatedKeluar = filteredKeluar.slice((pageKeluar - 1) * rowsPerPage, pageKeluar * rowsPerPage);
 
-  const totalPageMaterial = Math.ceil(filteredMaterial.length / rowsPerPage);
-  const totalPageMasuk = Math.ceil(filteredMasuk.length / rowsPerPage);
-  const totalPageKeluar = Math.ceil(filteredKeluar.length / rowsPerPage);
+  const totalPageMaterial = Math.ceil(filteredMaterial.length / rowsPerPage) || 1;
+  const totalPageMasuk = Math.ceil(filteredMasuk.length / rowsPerPage) || 1;
+  const totalPageKeluar = Math.ceil(filteredKeluar.length / rowsPerPage) || 1;
 
   const inputClass = "w-full p-2 border border-slate-300 rounded-lg bg-white text-slate-900 placeholder-slate-400 focus:outline-none focus:border-blue-500 font-medium";
   const selectClass = "px-3 py-2 text-sm border border-slate-300 rounded-lg bg-white text-slate-900 font-medium";
@@ -321,7 +317,7 @@ export default function App() {
 
         <main className="flex-1 p-6 overflow-auto">
           
-          {/* DASHBOARD DENGAN INFORMASI STOK MENIPIS / HABIS */}
+          {/* DASHBOARD */}
           {activeTab === 'Dashboard' && (
             <div className="space-y-6">
               <div className={`p-4 rounded-xl shadow-sm border flex flex-wrap gap-3 items-center ${darkMode ? 'bg-slate-800 border-slate-700' : 'bg-white border-slate-200'}`}>
@@ -362,7 +358,7 @@ export default function App() {
               <div className={`rounded-xl shadow-sm border overflow-hidden ${darkMode ? 'bg-slate-800 border-slate-700' : 'bg-white border-slate-200'}`}>
                 <div className="p-4 border-b flex items-center justify-between bg-amber-50 dark:bg-slate-900">
                   <h3 className="font-bold text-xs uppercase tracking-wider text-amber-700 dark:text-amber-400 flex items-center gap-2">
-                    <AlertTriangle size={16} /> Perhatian: Daftar Material dengan Stok Menipis (Qty $\le 5$) atau Habis ($0$)
+                    <AlertTriangle size={16} /> Perhatian: Daftar Material dengan Stok Menipis (Qty ≤ 5) atau Habis (0)
                   </h3>
                   <span className="text-xs bg-amber-200 dark:bg-amber-900 text-amber-800 dark:text-amber-200 px-2 py-0.5 rounded font-bold">
                     Total: {lowStockItems.length} Item
@@ -381,9 +377,7 @@ export default function App() {
                   </thead>
                   <tbody className={`divide-y ${darkMode ? 'divide-slate-700' : 'divide-slate-100'}`}>
                     {lowStockItems.length === 0 ? (
-                      <tr>
-                        <td colSpan="6" className="p-6 text-center text-slate-400">Semua stok barang dalam kondisi aman (&gt; 5 unit).</td>
-                      </tr>
+                      <tr><td colSpan="6" className="p-6 text-center text-slate-400">Semua stok barang dalam kondisi aman (&gt; 5 unit).</td></tr>
                     ) : (
                       lowStockItems.slice(0, 15).map((item, idx) => {
                         const q = Number(item.Qty || 0);
@@ -395,11 +389,7 @@ export default function App() {
                             <td className="p-3.5"><span className="bg-yellow-100 text-yellow-800 px-2 py-0.5 rounded font-bold text-[10px]">{item.Lokasi || 'Rak A1'}</span></td>
                             <td className="p-3.5 text-center font-bold text-rose-600 text-sm">{q} {item['Base Unit of Measure'] || 'Ea'}</td>
                             <td className="p-3.5 text-center">
-                              {q === 0 ? (
-                                <span className="bg-rose-100 text-rose-800 px-2 py-1 rounded font-bold text-[10px]">Habis Total</span>
-                              ) : (
-                                <span className="bg-amber-100 text-amber-800 px-2 py-1 rounded font-bold text-[10px]">Menipis</span>
-                              )}
+                              {q === 0 ? <span className="bg-rose-100 text-rose-800 px-2 py-1 rounded font-bold text-[10px]">Habis Total</span> : <span className="bg-amber-100 text-amber-800 px-2 py-1 rounded font-bold text-[10px]">Menipis</span>}
                             </td>
                           </tr>
                         );
@@ -411,15 +401,16 @@ export default function App() {
             </div>
           )}
 
-          {/* MASTER BARANG DENGAN KOLOM LOKASI */}
+          {/* MASTER BARANG (DENGAN TOMBOL NAVIGASI / PAGINATION DI BAWAH) */}
           {activeTab === 'Master Barang' && (
-            <div>
-              <div className={`p-4 rounded-xl shadow-sm border mb-4 flex gap-3 items-center ${darkMode ? 'bg-slate-800 border-slate-700' : 'bg-white border-slate-200'}`}>
+            <div className="space-y-4">
+              <div className={`p-4 rounded-xl shadow-sm border flex gap-3 items-center ${darkMode ? 'bg-slate-800 border-slate-700' : 'bg-white border-slate-200'}`}>
                 <div className="relative flex-1">
                   <Search className="absolute left-3 top-2.5 text-slate-400" size={16} />
                   <input type="text" placeholder="Cari nama barang, kode, part number, atau lokasi rak..." className={searchClass} value={pencarian} onChange={(e) => { setPencarian(e.target.value); setPageMaterial(1); }} />
                 </div>
               </div>
+
               <div className={`rounded-xl shadow-sm border overflow-hidden ${darkMode ? 'bg-slate-800 border-slate-700' : 'bg-white border-slate-200'}`}>
                 <table className="w-full text-left text-xs">
                   <thead className={`border-b font-semibold ${darkMode ? 'bg-slate-900 text-slate-400 border-slate-700' : 'bg-slate-50 text-slate-600 border-slate-200'}`}>
@@ -432,36 +423,58 @@ export default function App() {
                     </tr>
                   </thead>
                   <tbody className={`divide-y ${darkMode ? 'divide-slate-700' : 'divide-slate-100'}`}>
-                    {paginatedMaterial.map((item, index) => (
-                      <tr key={index} className={`hover:bg-opacity-50 ${darkMode ? 'hover:bg-slate-700' : 'hover:bg-slate-50'}`}>
-                        <td className="p-3.5 font-semibold">{item['Nama Barang'] || '-'}</td>
-                        <td className="p-3.5 text-slate-500 font-mono">{item.Kode} / {item['Nomor Barang'] || '-'}</td>
-                        <td className="p-3.5">{item['Part Unit'] || '-'}</td>
-                        <td className="p-3.5">
-                          <span className="bg-blue-100 text-blue-800 px-2 py-0.5 rounded font-bold text-[10px]">
-                            📍 {item.Lokasi || 'Rak A1'}
-                          </span>
-                        </td>
-                        <td className="p-3.5 font-bold text-emerald-600">{item.Qty || 0}</td>
-                      </tr>
-                    ))}
+                    {paginatedMaterial.length === 0 ? (
+                      <tr><td colSpan="5" className="p-8 text-center text-slate-400">Tidak ada data master barang yang ditemukan.</td></tr>
+                    ) : (
+                      paginatedMaterial.map((item, index) => (
+                        <tr key={index} className={`hover:bg-opacity-50 ${darkMode ? 'hover:bg-slate-700' : 'hover:bg-slate-50'}`}>
+                          <td className="p-3.5 font-semibold">{item['Nama Barang'] || '-'}</td>
+                          <td className="p-3.5 text-slate-500 font-mono">{item.Kode} / {item['Nomor Barang'] || '-'}</td>
+                          <td className="p-3.5">{item['Part Unit'] || '-'}</td>
+                          <td className="p-3.5">
+                            <span className="bg-blue-100 text-blue-800 px-2 py-0.5 rounded font-bold text-[10px]">📍 {item.Lokasi || 'Rak A1'}</span>
+                          </td>
+                          <td className="p-3.5 font-bold text-emerald-600">{item.Qty || 0}</td>
+                        </tr>
+                      ))
+                    )}
                   </tbody>
                 </table>
+
+                {/* PAGINATION / TOMBOL NAVIGASI HALAMAN DI BAWAH TABEL */}
+                <div className={`p-4 border-t flex justify-between items-center text-xs ${darkMode ? 'border-slate-700 text-slate-300' : 'border-slate-200 text-slate-700'}`}>
+                  <span className="font-semibold">
+                    Menampilkan halaman <span className="text-yellow-500 font-bold">{pageMaterial}</span> dari {totalPageMaterial} (Total: {filteredMaterial.length} Data)
+                  </span>
+                  <div className="flex gap-2">
+                    <button 
+                      onClick={() => setPageMaterial(p => Math.max(p - 1, 1))} 
+                      disabled={pageMaterial === 1} 
+                      className="px-3 py-1.5 border rounded-lg bg-emerald-600 text-white font-bold hover:bg-emerald-700 disabled:opacity-40 disabled:cursor-not-allowed shadow"
+                    >
+                      ◀ Sebelumnya
+                    </button>
+                    <button 
+                      onClick={() => setPageMaterial(p => Math.min(p + 1, totalPageMaterial))} 
+                      disabled={pageMaterial >= totalPageMaterial} 
+                      className="px-3 py-1.5 border rounded-lg bg-emerald-600 text-white font-bold hover:bg-emerald-700 disabled:opacity-40 disabled:cursor-not-allowed shadow"
+                    >
+                      Berikutnya ▶
+                    </button>
+                  </div>
+                </div>
+
               </div>
             </div>
           )}
 
           {activeTab === 'Stok Masuk' && (
-            <div>
-              <div className={`p-4 rounded-xl shadow-sm border mb-4 flex gap-3 items-center ${darkMode ? 'bg-slate-800 border-slate-700' : 'bg-white border-slate-200'}`}>
+            <div className="space-y-4">
+              <div className={`p-4 rounded-xl shadow-sm border flex gap-3 items-center ${darkMode ? 'bg-slate-800 border-slate-700' : 'bg-white border-slate-200'}`}>
                 <div className="relative flex-1">
                   <Search className="absolute left-3 top-2.5 text-slate-400" size={16} />
-                  <input type="text" placeholder="Cari nama barang..." className={searchClass} value={pencarian} onChange={(e) => { setPencarian(e.target.value); setPageMasuk(1); }} />
+                  <input type="text" placeholder="Cari barang masuk..." className={searchClass} value={pencarian} onChange={(e) => { setPencarian(e.target.value); setPageMasuk(1); }} />
                 </div>
-                <select value={selectedMonth} onChange={(e) => setSelectedMonth(e.target.value)} className={selectClass}>
-                  <option value="">Semua Bulan</option>
-                  <option value="1">Januari</option><option value="2">Februari</option><option value="3">Maret</option>
-                </select>
               </div>
               <div className={`rounded-xl shadow-sm border overflow-hidden ${darkMode ? 'bg-slate-800 border-slate-700' : 'bg-white border-slate-200'}`}>
                 <table className="w-full text-left text-xs">
@@ -470,25 +483,27 @@ export default function App() {
                   </thead>
                   <tbody className={`divide-y ${darkMode ? 'divide-slate-700' : 'divide-slate-100'}`}>
                     {paginatedMasuk.map((item, index) => (
-                      <tr key={index} className={`hover:bg-opacity-50 ${darkMode ? 'hover:bg-slate-700' : 'hover:bg-slate-50'}`}>
-                        <td className="p-3.5">{formatTanggalExcel(item.Tanggal)}</td>
-                        <td className="p-3.5 font-mono">{item.Kode}</td>
-                        <td className="p-3.5">{item.Description}</td>
-                        <td className="p-3.5 font-bold text-emerald-600">+{item.Qty}</td>
-                      </tr>
+                      <tr key={index}><td className="p-3.5">{formatTanggalExcel(item.Tanggal)}</td><td className="p-3.5 font-mono">{item.Kode}</td><td className="p-3.5">{item.Description}</td><td className="p-3.5 font-bold text-emerald-600">+{item.Qty}</td></tr>
                     ))}
                   </tbody>
                 </table>
+                <div className={`p-4 border-t flex justify-between items-center text-xs ${darkMode ? 'border-slate-700 text-slate-300' : 'border-slate-200 text-slate-700'}`}>
+                  <span className="font-semibold">Halaman {pageMasuk} dari {totalPageMasuk} (Total: {filteredMasuk.length} Data)</span>
+                  <div className="flex gap-2">
+                    <button onClick={() => setPageMasuk(p => Math.max(p - 1, 1))} disabled={pageMasuk === 1} className="px-3 py-1.5 border rounded-lg bg-emerald-600 text-white font-bold disabled:opacity-40 shadow">◀ Sebelumnya</button>
+                    <button onClick={() => setPageMasuk(p => Math.min(p + 1, totalPageMasuk))} disabled={pageMasuk >= totalPageMasuk} className="px-3 py-1.5 border rounded-lg bg-emerald-600 text-white font-bold disabled:opacity-40 shadow">Berikutnya ▶</button>
+                  </div>
+                </div>
               </div>
             </div>
           )}
 
           {activeTab === 'Stok Keluar' && (
-            <div>
-              <div className={`p-4 rounded-xl shadow-sm border mb-4 flex gap-3 items-center ${darkMode ? 'bg-slate-800 border-slate-700' : 'bg-white border-slate-200'}`}>
+            <div className="space-y-4">
+              <div className={`p-4 rounded-xl shadow-sm border flex gap-3 items-center ${darkMode ? 'bg-slate-800 border-slate-700' : 'bg-white border-slate-200'}`}>
                 <div className="relative flex-1">
                   <Search className="absolute left-3 top-2.5 text-slate-400" size={16} />
-                  <input type="text" placeholder="Cari nama barang..." className={searchClass} value={pencarian} onChange={(e) => { setPencarian(e.target.value); setPageKeluar(1); }} />
+                  <input type="text" placeholder="Cari barang keluar..." className={searchClass} value={pencarian} onChange={(e) => { setPencarian(e.target.value); setPageKeluar(1); }} />
                 </div>
               </div>
               <div className={`rounded-xl shadow-sm border overflow-hidden ${darkMode ? 'bg-slate-800 border-slate-700' : 'bg-white border-slate-200'}`}>
@@ -498,15 +513,17 @@ export default function App() {
                   </thead>
                   <tbody className={`divide-y ${darkMode ? 'divide-slate-700' : 'divide-slate-100'}`}>
                     {paginatedKeluar.map((item, index) => (
-                      <tr key={index} className={`hover:bg-opacity-50 ${darkMode ? 'hover:bg-slate-700' : 'hover:bg-slate-50'}`}>
-                        <td className="p-3.5">{formatTanggalExcel(item['Doc.Date'])}</td>
-                        <td className="p-3.5 font-mono">{item.Kode}</td>
-                        <td className="p-3.5">{item['Nama Barang']}</td>
-                        <td className="p-3.5 font-bold text-rose-600">-{item.Qty}</td>
-                      </tr>
+                      <tr key={index}><td className="p-3.5">{formatTanggalExcel(item['Doc.Date'])}</td><td className="p-3.5 font-mono">{item.Kode}</td><td className="p-3.5">{item['Nama Barang']}</td><td className="p-3.5 font-bold text-rose-600">-{item.Qty}</td></tr>
                     ))}
                   </tbody>
                 </table>
+                <div className={`p-4 border-t flex justify-between items-center text-xs ${darkMode ? 'border-slate-700 text-slate-300' : 'border-slate-200 text-slate-700'}`}>
+                  <span className="font-semibold">Halaman {pageKeluar} dari {totalPageKeluar} (Total: {filteredKeluar.length} Data)</span>
+                  <div className="flex gap-2">
+                    <button onClick={() => setPageKeluar(p => Math.max(p - 1, 1))} disabled={pageKeluar === 1} className="px-3 py-1.5 border rounded-lg bg-emerald-600 text-white font-bold disabled:opacity-40 shadow">◀ Sebelumnya</button>
+                    <button onClick={() => setPageKeluar(p => Math.min(p + 1, totalPageKeluar))} disabled={pageKeluar >= totalPageKeluar} className="px-3 py-1.5 border rounded-lg bg-emerald-600 text-white font-bold disabled:opacity-40 shadow">Berikutnya ▶</button>
+                  </div>
+                </div>
               </div>
             </div>
           )}
@@ -515,44 +532,28 @@ export default function App() {
           {activeTab === 'Stok Opname' && (
             <div className="space-y-4">
               <div className={`p-4 rounded-xl border shadow-sm flex justify-between items-center ${darkMode ? 'bg-slate-800 border-slate-700' : 'bg-white border-slate-200'}`}>
-                <div>
-                  <h3 className="font-bold text-sm">Lembar Kerja Stock Opname Gudang Site Bontang</h3>
-                  <p className="text-xs text-slate-400">Masukkan jumlah fisik barang untuk memeriksa selisih stok.</p>
-                </div>
-                <button onClick={() => alert("Hasil Opname berhasil disimpan!")} className="bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-2 rounded-lg text-xs font-semibold shadow">
-                  Simpan Sesi Opname
-                </button>
+                <div><h3 className="font-bold text-sm">Stock Opname</h3><p className="text-xs text-slate-400">Hitung fisik gudang.</p></div>
+                <button onClick={() => alert("Berhasil disimpan!")} className="bg-emerald-600 text-white px-4 py-2 rounded-lg text-xs font-semibold shadow">Simpan</button>
               </div>
-
               <div className={`rounded-xl shadow-sm border overflow-hidden ${darkMode ? 'bg-slate-800 border-slate-700' : 'bg-white border-slate-200'}`}>
                 <table className="w-full text-left text-xs">
                   <thead className={`border-b font-semibold ${darkMode ? 'bg-slate-900 text-slate-400 border-slate-700' : 'bg-slate-50 text-slate-600 border-slate-200'}`}>
-                    <tr><th className="p-3.5">KODE</th><th className="p-3.5">NAMA BARANG</th><th className="p-3.5">LOKASI</th><th className="p-3.5 text-center">STOK SISTEM</th><th className="p-3.5 text-center">STOK FISIK</th><th className="p-3.5 text-center">SELISIH</th></tr>
+                    <tr><th className="p-3.5">KODE</th><th className="p-3.5">NAMA BARANG</th><th className="p-3.5">LOKASI</th><th className="p-3.5 text-center">SISTEM</th><th className="p-3.5 text-center">FISIK</th><th className="p-3.5 text-center">SELISIH</th></tr>
                   </thead>
                   <tbody className={`divide-y ${darkMode ? 'divide-slate-700' : 'divide-slate-100'}`}>
                     {dataMaterial.slice(0, 30).map((item, index) => {
                       const kode = item.Kode || index;
-                      const stokSistem = Number(item.Qty) || 0;
-                      const stokFisik = physicalStocks[kode] !== undefined ? Number(physicalStocks[kode]) : stokSistem;
-                      const selisih = stokFisik - stokSistem;
-
+                      const sys = Number(item.Qty) || 0;
+                      const phys = physicalStocks[kode] !== undefined ? Number(physicalStocks[kode]) : sys;
+                      const diff = phys - sys;
                       return (
                         <tr key={index}>
-                          <td className="p-3.5 font-mono font-bold">{item.Kode || '-'}</td>
-                          <td className="p-3.5 font-medium">{item['Nama Barang'] || '-'}</td>
+                          <td className="p-3.5 font-mono font-bold">{item.Kode}</td>
+                          <td className="p-3.5">{item['Nama Barang']}</td>
                           <td className="p-3.5 font-semibold text-blue-600">{item.Lokasi || 'Rak A1'}</td>
-                          <td className="p-3.5 text-center font-bold text-blue-600">{stokSistem}</td>
-                          <td className="p-3.5 text-center">
-                            <input 
-                              type="number" 
-                              className="w-24 p-1 text-center border border-slate-300 rounded font-bold bg-white text-slate-900"
-                              value={physicalStocks[kode] !== undefined ? physicalStocks[kode] : stokSistem}
-                              onChange={(e) => setPhysicalStocks({...physicalStocks, [kode]: e.target.value})}
-                            />
-                          </td>
-                          <td className="p-3.5 text-center">
-                            {selisih === 0 ? <span className="bg-emerald-100 text-emerald-800 px-2 py-1 rounded font-bold text-[10px]">Sesuai (0)</span> : selisih > 0 ? <span className="bg-blue-100 text-blue-800 px-2 py-1 rounded font-bold text-[10px]">Lebih (+{selisih})</span> : <span className="bg-rose-100 text-rose-800 px-2 py-1 rounded font-bold text-[10px]">Kurang ({selisih})</span>}
-                          </td>
+                          <td className="p-3.5 text-center font-bold text-blue-600">{sys}</td>
+                          <td className="p-3.5 text-center"><input type="number" className="w-20 p-1 text-center border rounded font-bold bg-white text-slate-900" value={phys} onChange={(e) => setPhysicalStocks({...physicalStocks, [kode]: e.target.value})}/></td>
+                          <td className="p-3.5 text-center">{diff === 0 ? <span className="bg-emerald-100 text-emerald-800 px-2 py-0.5 rounded font-bold text-[10px]">Sesuai</span> : <span className="bg-rose-100 text-rose-800 px-2 py-0.5 rounded font-bold text-[10px]">{diff}</span>}</td>
                         </tr>
                       );
                     })}
@@ -566,44 +567,15 @@ export default function App() {
           {activeTab === 'Kartu Stok' && (
             <div className="space-y-4">
               <div className={`p-4 rounded-xl border shadow-sm flex items-center gap-4 ${darkMode ? 'bg-slate-800 border-slate-700' : 'bg-white border-slate-200'}`}>
-                <span className="text-xs font-semibold">Pilih atau Cari Barang:</span>
+                <span className="text-xs font-semibold">Pilih Barang:</span>
                 <select value={selectedItemCode} onChange={(e) => setSelectedItemCode(e.target.value)} className={selectClass}>
-                  <option value="">-- Pilih Material Master Barang --</option>
+                  <option value="">-- Pilih Material --</option>
                   {dataMaterial.map((m, idx) => (<option key={idx} value={m.Kode}>{m.Kode} - {m['Nama Barang']} (Lokasi: {m.Lokasi || 'Rak A1'})</option>))}
                 </select>
               </div>
-
-              {selectedItemCode ? (
+              {selectedItemCode && (
                 <div className={`p-5 rounded-xl border shadow-sm space-y-4 ${darkMode ? 'bg-slate-800 border-slate-700' : 'bg-white border-slate-200'}`}>
-                  <h3 className="font-bold text-sm border-b pb-2">Riwayat Kartu Stok: <span className="text-yellow-500">{selectedItemCode}</span></h3>
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                    <div className="border rounded-lg p-3">
-                      <h4 className="font-bold text-xs text-emerald-600 mb-2">Riwayat Masuk</h4>
-                      <div className="space-y-2 max-h-60 overflow-y-auto text-xs">
-                        {dataMasuk.filter(m => m.Kode === selectedItemCode).map((m, i) => (
-                          <div key={i} className="p-2 border rounded bg-white text-slate-900 flex justify-between">
-                            <span>{m.Description} (Tgl: {formatTanggalExcel(m.Tanggal)})</span>
-                            <span className="font-bold text-emerald-600">+{m.Qty}</span>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                    <div className="border rounded-lg p-3">
-                      <h4 className="font-bold text-xs text-rose-600 mb-2">Riwayat Keluar</h4>
-                      <div className="space-y-2 max-h-60 overflow-y-auto text-xs">
-                        {dataKeluar.filter(k => k.Kode === selectedItemCode).map((k, i) => (
-                          <div key={i} className="p-2 border rounded bg-white text-slate-900 flex justify-between">
-                            <span>{k['Nama Barang']} (Mekanik: {k.Mekanik})</span>
-                            <span className="font-bold text-rose-600">-{k.Qty}</span>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              ) : (
-                <div className={`p-12 text-center rounded-xl border ${darkMode ? 'bg-slate-800 border-slate-700' : 'bg-white border-slate-200'}`}>
-                  <p className="text-sm text-slate-400">Silakan pilih salah satu kode barang di atas.</p>
+                  <h3 className="font-bold text-sm border-b pb-2">Riwayat: <span className="text-yellow-500">{selectedItemCode}</span></h3>
                 </div>
               )}
             </div>
@@ -612,29 +584,15 @@ export default function App() {
           {/* REKAP STOK */}
           {activeTab === 'Rekap Stok' && (
             <div className={`rounded-xl shadow-sm border overflow-hidden ${darkMode ? 'bg-slate-800 border-slate-700' : 'bg-white border-slate-200'}`}>
-              <div className="p-4 border-b flex justify-between items-center">
-                <h3 className="font-bold text-sm">Rekapitulasi Status Persediaan Gudang & Lokasi</h3>
-                <button onClick={exportToExcel} className="bg-emerald-600 hover:bg-emerald-700 text-white px-3 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1.5"><Download size={14}/> Unduh Excel</button>
-              </div>
+              <div className="p-4 border-b flex justify-between items-center"><h3 className="font-bold text-sm">Rekap Persediaan</h3><button onClick={exportToExcel} className="bg-emerald-600 text-white px-3 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1.5"><Download size={14}/> Excel</button></div>
               <table className="w-full text-left text-xs">
                 <thead className={`border-b font-semibold ${darkMode ? 'bg-slate-900 text-slate-400 border-slate-700' : 'bg-slate-50 text-slate-600 border-slate-200'}`}>
-                  <tr><th className="p-3.5">KODE</th><th className="p-3.5">NAMA MATERIAL</th><th className="p-3.5">LOKASI RAK</th><th className="p-3.5 text-center">STOK TERSEDIA</th><th className="p-3.5 text-center">STATUS</th></tr>
+                  <tr><th className="p-3.5">KODE</th><th className="p-3.5">NAMA</th><th className="p-3.5">LOKASI</th><th className="p-3.5 text-center">STOK</th></tr>
                 </thead>
                 <tbody className={`divide-y ${darkMode ? 'divide-slate-700' : 'divide-slate-100'}`}>
-                  {dataMaterial.slice(0, 40).map((item, index) => {
-                    const qty = Number(item.Qty) || 0;
-                    return (
-                      <tr key={index}>
-                        <td className="p-3.5 font-mono font-semibold">{item.Kode || '-'}</td>
-                        <td className="p-3.5 font-medium">{item['Nama Barang'] || '-'}</td>
-                        <td className="p-3.5 font-bold text-blue-600">{item.Lokasi || 'Rak A1'}</td>
-                        <td className="p-3.5 text-center font-bold text-emerald-600">{qty}</td>
-                        <td className="p-3.5 text-center">
-                          {qty > 5 ? <span className="bg-emerald-100 text-emerald-800 px-2 py-1 rounded font-bold text-[10px]">Aman</span> : <span className="bg-rose-100 text-rose-800 px-2 py-1 rounded font-bold text-[10px]">Menipis / Habis</span>}
-                        </td>
-                      </tr>
-                    );
-                  })}
+                  {dataMaterial.slice(0, 40).map((item, index) => (
+                    <tr key={index}><td className="p-3.5 font-mono">{item.Kode}</td><td className="p-3.5">{item['Nama Barang']}</td><td className="p-3.5 font-bold text-blue-600">{item.Lokasi || 'Rak A1'}</td><td className="p-3.5 text-center font-bold text-emerald-600">{item.Qty}</td></tr>
+                  ))}
                 </tbody>
               </table>
             </div>
@@ -642,79 +600,49 @@ export default function App() {
 
           {/* LAPORAN */}
           {activeTab === 'Laporan' && (
-            <div className="space-y-4">
-              <div className={`p-4 rounded-xl border shadow-sm flex justify-between items-center ${darkMode ? 'bg-slate-800 border-slate-700' : 'bg-white border-slate-200'}`}>
-                <h3 className="font-bold text-sm">Pusat Laporan Logistik</h3>
-                <button onClick={exportToExcel} className="bg-emerald-600 hover:bg-emerald-700 text-white px-3 py-2 rounded-lg text-xs font-semibold flex items-center gap-1.5"><Download size={14}/> Unduh Laporan Excel</button>
-              </div>
+            <div className={`p-4 rounded-xl border shadow-sm flex justify-between items-center ${darkMode ? 'bg-slate-800 border-slate-700' : 'bg-white border-slate-200'}`}>
+              <h3 className="font-bold text-sm">Pusat Laporan</h3><button onClick={exportToExcel} className="bg-emerald-600 text-white px-3 py-2 rounded-lg text-xs font-semibold"><Download size={14}/> Unduh</button>
             </div>
           )}
 
           {/* PENGGUNA */}
           {activeTab === 'Pengguna' && (
-            <div className="space-y-4">
-              <div className={`p-4 rounded-xl border shadow-sm flex justify-between items-center ${darkMode ? 'bg-slate-800 border-slate-700' : 'bg-white border-slate-200'}`}>
-                <div>
-                  <h3 className="font-bold text-sm">Manajemen Pengguna</h3>
-                  <p className="text-xs text-slate-400">Daftar staf yang memiliki akses sistem.</p>
-                </div>
-                {currentUser.role === 'Admin' && (
-                  <button onClick={() => setShowModalUser(true)} className="bg-blue-600 hover:bg-blue-700 text-white px-3.5 py-2 rounded-lg text-xs font-semibold flex items-center gap-1.5"><UserPlus size={14}/> Tambah Pengguna</button>
-                )}
-              </div>
-              <div className={`rounded-xl shadow-sm border overflow-hidden ${darkMode ? 'bg-slate-800 border-slate-700' : 'bg-white border-slate-200'}`}>
-                <table className="w-full text-left text-xs">
-                  <thead className={`border-b font-semibold ${darkMode ? 'bg-slate-900 text-slate-400 border-slate-700' : 'bg-slate-50 text-slate-600 border-slate-200'}`}>
-                    <tr><th className="p-3.5">NAMA</th><th className="p-3.5">USERNAME</th><th className="p-3.5">ROLE</th><th className="p-3.5 text-center">AKSI</th></tr>
-                  </thead>
-                  <tbody className={`divide-y ${darkMode ? 'divide-slate-700' : 'divide-slate-100'}`}>
-                    {daftarPengguna.map((u) => (
-                      <tr key={u.id}>
-                        <td className="p-3.5 font-semibold">{u.nama}</td>
-                        <td className="p-3.5 font-mono">{u.username}</td>
-                        <td className="p-3.5"><span className="px-2 py-0.5 rounded font-semibold text-[10px] bg-purple-100 text-purple-800">{u.role}</span></td>
-                        <td className="p-3.5 text-center">
-                          {currentUser.role === 'Admin' && <button onClick={() => handleDeleteUser(u.id, u.role)} className="p-1 bg-rose-100 text-rose-700 rounded"><Trash2 size={14} /></button>}
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
+            <div className={`rounded-xl shadow-sm border overflow-hidden ${darkMode ? 'bg-slate-800 border-slate-700' : 'bg-white border-slate-200'}`}>
+              <div className="p-4 border-b flex justify-between items-center"><h3 className="font-bold text-sm">Pengguna</h3>{currentUser.role === 'Admin' && <button onClick={() => setShowModalUser(true)} className="bg-blue-600 text-white px-3 py-1.5 rounded-lg text-xs font-semibold">Tambah</button>}</div>
+              <table className="w-full text-left text-xs">
+                <thead className={`border-b font-semibold ${darkMode ? 'bg-slate-900 text-slate-400 border-slate-700' : 'bg-slate-50 text-slate-600 border-slate-200'}`}>
+                  <tr><th className="p-3.5">NAMA</th><th className="p-3.5">USERNAME</th><th className="p-3.5">ROLE</th></tr>
+                </thead>
+                <tbody className={`divide-y ${darkMode ? 'divide-slate-700' : 'divide-slate-100'}`}>
+                  {daftarPengguna.map((u) => (<tr key={u.id}><td className="p-3.5 font-semibold">{u.nama}</td><td className="p-3.5 font-mono">{u.username}</td><td className="p-3.5">{u.role}</td></tr>))}
+                </tbody>
+              </table>
             </div>
           )}
 
           {/* PENGATURAN */}
           {activeTab === 'Pengaturan' && (
             <div className={`p-6 rounded-xl border shadow-sm max-w-2xl space-y-4 ${darkMode ? 'bg-slate-800 border-slate-700' : 'bg-white border-slate-200'}`}>
-              <h3 className="font-bold text-sm border-b pb-2 flex items-center gap-2 text-yellow-500"><Sliders size={18}/> Pengaturan Sistem</h3>
-              <div className="space-y-2 text-xs">
-                <label className="block font-semibold">Nama Perusahaan</label>
-                <input type="text" disabled className={inputClass} value="PT. Ryan Eka Pratama" />
-                <label className="block font-semibold">Lokasi Site</label>
-                <input type="text" disabled className={inputClass} value="Site Bontang, Kalimantan Timur" />
-              </div>
+              <h3 className="font-bold text-sm border-b pb-2">Pengaturan Sistem</h3>
+              <input type="text" disabled className={inputClass} value="PT. Ryan Eka Pratama - Site Bontang" />
             </div>
           )}
 
-          {/* MODAL INPUT: PRODUK BARU (DENGAN INPUT LOKASI RAK/YARD) */}
+          {/* MODAL INPUT: PRODUK BARU */}
           {showModalMaterial && (
             <div className="fixed inset-0 bg-black bg-opacity-60 flex items-center justify-center z-50 p-4">
               <div className={`w-full max-w-lg p-6 rounded-xl shadow-2xl border ${darkMode ? 'bg-slate-800 border-slate-700 text-white' : 'bg-white border-slate-200 text-slate-800'}`}>
-                <div className="flex justify-between items-center mb-4 border-b pb-2"><h3 className="font-bold text-base">Tambah Produk Baru & Lokasi Gudang</h3><button onClick={() => setShowModalMaterial(false)}><X size={20}/></button></div>
+                <div className="flex justify-between items-center mb-4 border-b pb-2"><h3 className="font-bold text-base">Tambah Produk Baru & Lokasi</h3><button onClick={() => setShowModalMaterial(false)}><X size={20}/></button></div>
                 <form onSubmit={handleAddMaterial} className="space-y-3 text-xs">
                   <div><label className="block font-semibold mb-1">Kode Barang</label><input type="text" required className={inputClass} value={formMaterial.kode} onChange={e => setFormMaterial({...formMaterial, kode: e.target.value})} placeholder="U198"/></div>
-                  <div><label className="block font-semibold mb-1">Nama Barang (Description)</label><input type="text" required className={inputClass} value={formMaterial.nama} onChange={e => setFormMaterial({...formMaterial, nama: e.target.value})} placeholder="FILTER OLI CAT"/></div>
-                  <div><label className="block font-semibold mb-1">Nomor Part / Barang</label><input type="text" className={inputClass} value={formMaterial.nomor} onChange={e => setFormMaterial({...formMaterial, nomor: e.target.value})} placeholder="1R-1808"/></div>
+                  <div><label className="block font-semibold mb-1">Nama Barang</label><input type="text" required className={inputClass} value={formMaterial.nama} onChange={e => setFormMaterial({...formMaterial, nama: e.target.value})} placeholder="FILTER OLI CAT"/></div>
+                  <div><label className="block font-semibold mb-1">Nomor Part</label><input type="text" className={inputClass} value={formMaterial.nomor} onChange={e => setFormMaterial({...formMaterial, nomor: e.target.value})} placeholder="1R-1808"/></div>
                   <div className="grid grid-cols-2 gap-2">
                     <div><label className="block font-semibold mb-1">Part Unit</label><input type="text" className={inputClass} value={formMaterial.unit} onChange={e => setFormMaterial({...formMaterial, unit: e.target.value})} placeholder="REP 110"/></div>
-                    <div>
-                      <label className="block font-semibold mb-1">Lokasi (Rak / Yard)</label>
-                      <input type="text" required className={inputClass} value={formMaterial.lokasi} onChange={e => setFormMaterial({...formMaterial, lokasi: e.target.value})} placeholder="Rak A1 / Yard B"/>
-                    </div>
+                    <div><label className="block font-semibold mb-1">Lokasi Rak / Yard</label><input type="text" required className={inputClass} value={formMaterial.lokasi} onChange={e => setFormMaterial({...formMaterial, lokasi: e.target.value})} placeholder="Rak A1"/></div>
                   </div>
                   <div><label className="block font-semibold mb-1">Qty Awal</label><input type="number" required className={inputClass} value={formMaterial.qty} onChange={e => setFormMaterial({...formMaterial, qty: e.target.value})} placeholder="0"/></div>
-                  <div className="flex justify-end gap-2 mt-4 pt-2 border-t"><button type="button" onClick={() => setShowModalMaterial(false)} className="px-4 py-2 border rounded-lg">Batal</button><button type="submit" className="px-4 py-2 bg-emerald-600 text-white font-semibold rounded-lg">Simpan Produk</button></div>
+                  <div className="flex justify-end gap-2 mt-4 pt-2 border-t"><button type="button" onClick={() => setShowModalMaterial(false)} className="px-4 py-2 border rounded-lg">Batal</button><button type="submit" className="px-4 py-2 bg-emerald-600 text-white font-semibold rounded-lg">Simpan</button></div>
                 </form>
               </div>
             </div>
@@ -724,14 +652,14 @@ export default function App() {
           {showModalMasuk && (
             <div className="fixed inset-0 bg-black bg-opacity-60 flex items-center justify-center z-50 p-4">
               <div className={`w-full max-w-lg p-6 rounded-xl shadow-2xl border ${darkMode ? 'bg-slate-800 border-slate-700 text-white' : 'bg-white border-slate-200 text-slate-800'}`}>
-                <div className="flex justify-between items-center mb-4 border-b pb-2"><h3 className="font-bold text-base">Tambah Stok Masuk</h3><button onClick={() => setShowModalMasuk(false)}><X size={20}/></button></div>
+                <div className="flex justify-between items-center mb-4 border-b pb-2"><h3 className="font-bold text-base">Stok Masuk</h3><button onClick={() => setShowModalMasuk(false)}><X size={20}/></button></div>
                 <form onSubmit={handleAddMasuk} className="space-y-3 text-xs">
                   <div className="grid grid-cols-2 gap-2">
                     <div><label className="block font-semibold mb-1">Tanggal</label><input type="date" required className={inputClass} value={formMasuk.tanggal} onChange={e => setFormMasuk({...formMasuk, tanggal: e.target.value})}/></div>
                     <div><label className="block font-semibold mb-1">Unit</label><input type="text" required className={inputClass} value={formMasuk.unit} onChange={e => setFormMasuk({...formMasuk, unit: e.target.value})}/></div>
                   </div>
                   <div className="grid grid-cols-2 gap-2">
-                    <div><label className="block font-semibold mb-1">Kode Barang</label><input type="text" required className={inputClass} value={formMasuk.kode} onChange={e => setFormMasuk({...formMasuk, kode: e.target.value})}/></div>
+                    <div><label className="block font-semibold mb-1">Kode</label><input type="text" required className={inputClass} value={formMasuk.kode} onChange={e => setFormMasuk({...formMasuk, kode: e.target.value})}/></div>
                     <div><label className="block font-semibold mb-1">Merk</label><input type="text" className={inputClass} value={formMasuk.merk} onChange={e => setFormMasuk({...formMasuk, merk: e.target.value})}/></div>
                   </div>
                   <div><label className="block font-semibold mb-1">Deskripsi</label><input type="text" required className={inputClass} value={formMasuk.description} onChange={e => setFormMasuk({...formMasuk, description: e.target.value})}/></div>
@@ -750,14 +678,14 @@ export default function App() {
           {showModalKeluar && (
             <div className="fixed inset-0 bg-black bg-opacity-60 flex items-center justify-center z-50 p-4">
               <div className={`w-full max-w-lg p-6 rounded-xl shadow-2xl border ${darkMode ? 'bg-slate-800 border-slate-700 text-white' : 'bg-white border-slate-200 text-slate-800'}`}>
-                <div className="flex justify-between items-center mb-4 border-b pb-2"><h3 className="font-bold text-base">Tambah Stok Keluar</h3><button onClick={() => setShowModalKeluar(false)}><X size={20}/></button></div>
+                <div className="flex justify-between items-center mb-4 border-b pb-2"><h3 className="font-bold text-base">Stok Keluar</h3><button onClick={() => setShowModalKeluar(false)}><X size={20}/></button></div>
                 <form onSubmit={handleAddKeluar} className="space-y-3 text-xs">
                   <div className="grid grid-cols-2 gap-2">
                     <div><label className="block font-semibold mb-1">Tanggal</label><input type="date" required className={inputClass} value={formKeluar.tanggal} onChange={e => setFormKeluar({...formKeluar, tanggal: e.target.value})}/></div>
                     <div><label className="block font-semibold mb-1">Unit</label><input type="text" required className={inputClass} value={formKeluar.unit} onChange={e => setFormKeluar({...formKeluar, unit: e.target.value})}/></div>
                   </div>
                   <div className="grid grid-cols-2 gap-2">
-                    <div><label className="block font-semibold mb-1">Kode Barang</label><input type="text" required className={inputClass} value={formKeluar.kode} onChange={e => setFormKeluar({...formKeluar, kode: e.target.value})}/></div>
+                    <div><label className="block font-semibold mb-1">Kode</label><input type="text" required className={inputClass} value={formKeluar.kode} onChange={e => setFormKeluar({...formKeluar, kode: e.target.value})}/></div>
                     <div><label className="block font-semibold mb-1">Mekanik</label><input type="text" className={inputClass} value={formKeluar.mekanik} onChange={e => setFormKeluar({...formKeluar, mekanik: e.target.value})}/></div>
                   </div>
                   <div><label className="block font-semibold mb-1">Nama Barang</label><input type="text" required className={inputClass} value={formKeluar.namaBarang} onChange={e => setFormKeluar({...formKeluar, namaBarang: e.target.value})}/></div>
@@ -775,9 +703,9 @@ export default function App() {
           {showModalUser && (
             <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
               <div className={`w-full max-w-md p-6 rounded-xl shadow-lg border ${darkMode ? 'bg-slate-800 border-slate-700 text-white' : 'bg-white border-slate-200 text-slate-800'}`}>
-                <div className="flex justify-between items-center mb-4 border-b pb-2"><h3 className="font-bold text-base">Tambah Pengguna Baru</h3><button onClick={() => setShowModalUser(false)}><X size={20}/></button></div>
+                <div className="flex justify-between items-center mb-4 border-b pb-2"><h3 className="font-bold text-base">Tambah Pengguna</h3><button onClick={() => setShowModalUser(false)}><X size={20}/></button></div>
                 <form onSubmit={handleAddUser} className="space-y-3 text-xs">
-                  <div><label className="block font-semibold mb-1">Nama Lengkap</label><input type="text" required className={inputClass} value={formUser.nama} onChange={e => setFormUser({...formUser, nama: e.target.value})}/></div>
+                  <div><label className="block font-semibold mb-1">Nama</label><input type="text" required className={inputClass} value={formUser.nama} onChange={e => setFormUser({...formUser, nama: e.target.value})}/></div>
                   <div><label className="block font-semibold mb-1">Username</label><input type="text" required className={inputClass} value={formUser.username} onChange={e => setFormUser({...formUser, username: e.target.value})}/></div>
                   <div><label className="block font-semibold mb-1">Role</label><select className={selectClass} value={formUser.role} onChange={e => setFormUser({...formUser, role: e.target.value})}><option value="Admin">Admin</option><option value="Editor">Editor</option><option value="Viewer">Viewer</option></select></div>
                   <div className="flex justify-end gap-2 mt-4 pt-2 border-t"><button type="button" onClick={() => setShowModalUser(false)} className="px-4 py-2 border rounded-lg">Batal</button><button type="submit" className="px-4 py-2 bg-blue-600 text-white font-semibold rounded-lg">Simpan</button></div>
