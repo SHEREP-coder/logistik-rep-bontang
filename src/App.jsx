@@ -11,7 +11,7 @@ import { initializeApp } from 'firebase/app';
 import {
   initializeFirestore, persistentLocalCache, persistentMultipleTabManager,
   collection, doc, getDoc, setDoc, addDoc, updateDoc, deleteDoc, onSnapshot,
-  writeBatch, runTransaction, serverTimestamp
+  writeBatch, runTransaction, serverTimestamp, query, where, getCountFromServer
 } from 'firebase/firestore';
 import {
   getAuth, onAuthStateChanged, signInWithEmailAndPassword, signOut,
@@ -149,6 +149,8 @@ const fmtDate = (v) => {
 };
 
 const poNumberValue = (s) => { const m = String(s || '').match(/(\d+)\s*$/); return m ? Number(m[1]) : 0; };
+// Periode 'YYYY-MM' dipakai untuk memuat transaksi per tahun (hemat kuota baca Firestore)
+const periodeOf = (v) => { const iso = toISODate(v); return iso ? iso.slice(0, 7) : 'Tanpa-Tanggal'; };
 const formatPoNumber = (n) => `A ${String(n).padStart(6, '0')}`;
 
 const chunk = (arr, size) => { const out = []; for (let i = 0; i < arr.length; i += size) out.push(arr.slice(i, i + size)); return out; };
@@ -251,6 +253,11 @@ export default function App() {
     try { localStorage.setItem('rep_font', String(fontSize)); } catch (e) { /* abaikan */ }
   }, [fontSize]);
   const [loadingCloud, setLoadingCloud] = useState(false);
+  const [loadingTrx, setLoadingTrx] = useState(false);
+  const [periodeReady, setPeriodeReady] = useState(null); // null=mengecek, true=hemat kuota aktif, false=belum migrasi
+  const [loadFromYear, setLoadFromYear] = useState(String(new Date().getFullYear()));
+  const [migrating, setMigrating] = useState(false);
+  const [migMsg, setMigMsg] = useState('');
   const [saving, setSaving] = useState(false);
   const [toast, setToast] = useState(null);
 
@@ -356,13 +363,14 @@ export default function App() {
     setActiveTab('Dashboard');
     setDataMaterial([]); setDataMasuk([]); setDataKeluar([]); setRiwayatPo([]); setRiwayatOpname([]); setDaftarPengguna([]);
     setRiwayatLoaded(false);
+    setPeriodeReady(null);
   };
 
   /* ---------- LANGGANAN DATA FIRESTORE (realtime) ---------- */
   useEffect(() => {
     if (!profile) return;
     setLoadingCloud(true);
-    let pending = 5;
+    let pending = 3;
     const finish = () => { pending -= 1; if (pending <= 0) setLoadingCloud(false); };
     const unsubs = [];
     const sub = (name, setter, extra) => {
@@ -379,8 +387,6 @@ export default function App() {
       unsubs.push(un);
     };
     sub('material', setDataMaterial);
-    sub('barangMasuk', setDataMasuk);
-    sub('barangKeluar', setDataKeluar);
     sub('riwayatPo', setRiwayatPo, () => setRiwayatLoaded(true));
     sub('stokOpname', setRiwayatOpname);
     if (profile.role === 'Admin') {
@@ -389,6 +395,43 @@ export default function App() {
     return () => unsubs.forEach((u) => u());
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [profile?.uid]);
+
+  /* ---------- HEMAT KUOTA: cek apakah semua transaksi sudah punya kolom Periode ---------- */
+  const checkPeriodeReady = async () => {
+    try {
+      const cnt = async (name, filtered) => (await getCountFromServer(filtered ? query(collection(db, name), where('Periode', '>=', '')) : collection(db, name))).data().count;
+      const [a, b, c, d] = await Promise.all([cnt('barangMasuk'), cnt('barangMasuk', true), cnt('barangKeluar'), cnt('barangKeluar', true)]);
+      setPeriodeReady(a === b && c === d);
+    } catch (err) { console.error('cek periode', err); setPeriodeReady(false); }
+  };
+  useEffect(() => { if (profile) checkPeriodeReady(); }, [profile?.uid]); // eslint-disable-line
+
+  /* ---------- LANGGANAN TRANSAKSI (hanya dari tahun terpilih bila hemat kuota aktif) ---------- */
+  useEffect(() => {
+    if (!profile || periodeReady === null || migrating) return;
+    setLoadingTrx(true);
+    let pending = 2;
+    const finish = () => { pending -= 1; if (pending <= 0) setLoadingTrx(false); };
+    const start = periodeReady && loadFromYear !== 'all' ? `${loadFromYear}-01` : null;
+    const unsubs = [];
+    const subTrx = (name, setter) => {
+      let first = true;
+      const ref = start ? query(collection(db, name), where('Periode', '>=', start)) : collection(db, name);
+      unsubs.push(onSnapshot(ref, (snap) => {
+        setter(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
+        if (first) { first = false; finish(); }
+      }, (err) => {
+        console.error(name, err);
+        notify(`Gagal memuat "${name}": ${err.code || err.message}`, 'error');
+        if (first) { first = false; finish(); }
+      }));
+    };
+    subTrx('barangMasuk', setDataMasuk);
+    subTrx('barangKeluar', setDataKeluar);
+    return () => unsubs.forEach((u) => u());
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [profile?.uid, periodeReady, loadFromYear, migrating]);
+  const isFullData = periodeReady === false || loadFromYear === 'all';
 
   /* ---------- TURUNAN DATA ---------- */
   const materialByKode = useMemo(() => {
@@ -569,7 +612,7 @@ export default function App() {
         Description: formMasuk.description.trim(), Merk: String(formMasuk.merk).trim(),
         'No. PO': formMasuk.noPo.trim(), 'No. Surat Jalan': formMasuk.suratJalan.trim(), Qty: qty, Satuan: formMasuk.satuan.trim(),
         'Kekurangan Supply': formMasuk.kekurangan === '' ? 0 : Number(formMasuk.kekurangan) || 0,
-        Keterangan: formMasuk.keterangan.trim()
+        Keterangan: formMasuk.keterangan.trim(), Periode: periodeOf(formMasuk.tanggal)
       };
       if (editingMasukId) {
         // EDIT: stok dikoreksi sebesar selisih qty lama dan baru
@@ -633,7 +676,7 @@ export default function App() {
         'Nomor Barang': String(formKeluar.nomorBarang).trim(),
         'Nama Barang': formKeluar.namaBarang.trim(), Mekanik: formKeluar.mekanik.trim(),
         'No. WO': formKeluar.noWo.trim(), HM_KM: formKeluar.hmKm.trim(),
-        Keterangan: formKeluar.keterangan.trim(), Qty: qty
+        Keterangan: formKeluar.keterangan.trim(), Qty: qty, Periode: periodeOf(formKeluar.tanggal)
       };
       if (editingKeluarId) {
         // EDIT: stok dikoreksi sebesar selisih qty lama dan baru
@@ -914,6 +957,7 @@ export default function App() {
 
   const importWorkbook = async (wb) => {
     if (!isAdmin) return notify('Hanya Admin yang dapat mengimpor.', 'error');
+    if (!isFullData) return notify('Operasi ini butuh seluruh data transaksi. Ubah "Rentang data" menjadi "Semua data" (kotak di atas Dashboard) lalu ulangi.', 'error');
     setImporting(true); setImportMsg('Membaca file...');
     let stage = 'membaca file';
     try {
@@ -990,7 +1034,7 @@ export default function App() {
       if (dataMasuk.length === 0) {
         stage = 'barang masuk';
         const rows = masukRows.filter((r) => r.Kode !== undefined).map((r) => ({
-          Tanggal: toISODate(r.Tanggal), Unit: str(r.Unit), Kode: str(r.Kode), 'Material Number': '',
+          Tanggal: toISODate(r.Tanggal), Periode: periodeOf(r.Tanggal), Unit: str(r.Unit), Kode: str(r.Kode), 'Material Number': '',
           Description: str(r.Description), Merk: str(r.Merk), 'No. PO': '', 'No. Surat Jalan': '', Qty: num(r.Qty), Satuan: '',
           createdAt: serverTimestamp(), createdBy: profile.username, ...masukFields(r)
         }));
@@ -1031,7 +1075,7 @@ export default function App() {
       if (dataKeluar.length === 0) {
         stage = 'barang keluar';
         const rows = keluarRows.filter((r) => r.Kode !== undefined).map((r) => ({
-          'Doc.Date': toISODate(r['Doc.Date']), Unit: str(r.Unit), Kode: str(r.Kode),
+          'Doc.Date': toISODate(r['Doc.Date']), Periode: periodeOf(r['Doc.Date']), Unit: str(r.Unit), Kode: str(r.Kode),
           'Nomor Barang': '', 'Nama Barang': str(r['Nama Barang']), Mekanik: str(r.Mekanik), 'No. WO': '', HM_KM: '', Keterangan: '',
           Qty: num(r.Qty), createdAt: serverTimestamp(), createdBy: profile.username, ...keluarFields(r)
         }));
@@ -1095,6 +1139,7 @@ export default function App() {
 
   const recalcStock = async () => {
     if (!isAdmin) return notify('Hanya Admin.', 'error');
+    if (!isFullData) return notify('Operasi ini butuh seluruh data transaksi. Ubah "Rentang data" menjadi "Semua data" (kotak di atas Dashboard) lalu ulangi.', 'error');
     const changes = dataMaterial.map((m) => {
       const t = totalsByKode.get(String(m.Kode || '').toLowerCase()) || { in: 0, out: 0 };
       return { m, qty: t.in - t.out };
@@ -1122,12 +1167,70 @@ export default function App() {
     setImporting(false);
   };
 
+  const unmigratedCount = useMemo(() => (periodeReady === false ? dataMasuk.filter((d) => !d.Periode).length + dataKeluar.filter((d) => !d.Periode).length : 0), [periodeReady, dataMasuk, dataKeluar]);
+  const migratePeriode = async () => {
+    if (!isAdmin) return notify('Hanya Admin.', 'error');
+    const todo = [
+      ...dataMasuk.filter((d) => !d.Periode).map((d) => ({ col: 'barangMasuk', id: d.id, p: periodeOf(d.Tanggal) })),
+      ...dataKeluar.filter((d) => !d.Periode).map((d) => ({ col: 'barangKeluar', id: d.id, p: periodeOf(d['Doc.Date']) }))
+    ];
+    if (todo.length === 0) { setMigMsg('Memeriksa ulang...'); await checkPeriodeReady(); setMigMsg(''); return; }
+    if (!window.confirm(`Migrasi akan menulis ${todo.length} dokumen (${todo.length} writes dari kuota 20.000/hari).\nJalankan sendirian, tutup aplikasi di perangkat lain, dan jangan impor data pada hari yang sama.\nLanjutkan?`)) return;
+    setMigrating(true); let done = 0;
+    try {
+      for (const part of chunk(todo, 400)) {
+        const batch = writeBatch(db);
+        part.forEach((x) => batch.update(doc(db, x.col, x.id), { Periode: x.p }));
+        await batch.commit(); done += part.length;
+        setMigMsg(`Migrasi... ${done}/${todo.length}`);
+      }
+      setMigMsg('Selesai. Memeriksa ulang...');
+      await checkPeriodeReady();
+      notify('Migrasi selesai. Mode hemat kuota aktif.');
+      setMigMsg('');
+    } catch (err) {
+      console.error(err);
+      const m = err.code === 'resource-exhausted' ? `Kuota tulis habis di ${done}/${todo.length}. Lanjutkan setelah kuota reset (tekan tombol migrasi lagi, proses akan melanjutkan sisanya).` : 'Gagal: ' + (err.code || err.message);
+      setMigMsg(m); notify(m, 'error');
+    }
+    setMigrating(false);
+  };
+
+  const dataRangeBar = (note) => {
+    const thisYear = new Date().getFullYear();
+    const partial = periodeReady === true && loadFromYear !== 'all';
+    return (
+      <div className="space-y-2">
+        {isAdmin && periodeReady === false && (
+          <div className="p-3 rounded-xl border border-amber-300 bg-amber-50 text-amber-800 text-xs flex flex-wrap items-center gap-3">
+            <span className="font-semibold">Mode hemat kuota belum aktif.</span>
+            <span>{unmigratedCount > 0 ? `${unmigratedCount} transaksi belum punya kolom Periode.` : 'Semua transaksi sudah bertanda Periode; tekan tombol untuk memverifikasi.'}</span>
+            <button disabled={migrating} onClick={migratePeriode} className="px-3 py-1.5 bg-amber-500 hover:bg-amber-600 disabled:opacity-60 text-slate-950 font-semibold rounded-lg">{migrating ? 'Memproses...' : 'Jalankan Migrasi Periode'}</button>
+            {migMsg && <span className="font-semibold">{migMsg}</span>}
+          </div>
+        )}
+        <div className={`px-4 py-2.5 rounded-xl border shadow-sm flex flex-wrap items-center gap-3 text-xs ${card}`}>
+          <Calendar size={14} className="text-emerald-500" />
+          <span>Rentang data transaksi: <b>{partial ? `${loadFromYear} s/d sekarang` : 'semua tahun'}</b> ({dataMasuk.length} masuk, {dataKeluar.length} keluar)</span>
+          {periodeReady === true && (
+            <select value={loadFromYear} onChange={(e) => { setLoadFromYear(e.target.value); setPage(1); }} className={selectClass}>
+              {Array.from({ length: thisYear - 2023 }, (_, i) => thisYear - i).map((y) => <option key={y} value={String(y)}>Mulai tahun {y}</option>)}
+              <option value="all">Semua data</option>
+            </select>
+          )}
+          {periodeReady === null && <span className="text-slate-400">Memeriksa...</span>}
+          {note && partial && <span className="text-amber-600">{note}</span>}
+        </div>
+      </div>
+    );
+  };
+
   const downloadSheets = (filename, sheets) => {
     const wb = XLSX.utils.book_new();
     Object.entries(sheets).forEach(([name, rows]) => XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(rows.map(stripMeta)), name));
     XLSX.writeFile(wb, filename);
   };
-  const exportAll = () => downloadSheets('BACKLOG_LOGISTIK_REP_UPDATE.xlsx', { MATERIAL: dataMaterial, 'Barang Masuk': sortedMasuk.map(withAvail), 'Barang Keluar': sortedKeluar });
+  const exportAll = () => !isFullData ? notify('Operasi ini butuh seluruh data transaksi. Ubah "Rentang data" menjadi "Semua data" (kotak di atas Dashboard) lalu ulangi.', 'error') : downloadSheets('BACKLOG_LOGISTIK_REP_UPDATE.xlsx', { MATERIAL: dataMaterial, 'Barang Masuk': sortedMasuk.map(withAvail), 'Barang Keluar': sortedKeluar });
 
   /* ============================== STYLE ============================== */
   const card = darkMode ? 'bg-slate-800 border-slate-700' : 'bg-white border-slate-200';
@@ -1266,7 +1369,7 @@ export default function App() {
           <div>
             <h1 className="text-xl font-bold flex items-center gap-2">
               {activeTab}
-              {loadingCloud && <span className="text-xs text-yellow-500 font-normal animate-pulse">☁️ Sinkronisasi Cloud...</span>}
+              {(loadingCloud || loadingTrx) && <span className="text-xs text-yellow-500 font-normal animate-pulse">☁️ Sinkronisasi Cloud...</span>}
             </h1>
             <p className="text-xs text-slate-400">Logistic Management System - PT. Ryan Eka Pratama Site Bontang</p>
           </div>
@@ -1292,6 +1395,7 @@ export default function App() {
           {/* ===================== DASHBOARD ===================== */}
           {activeTab === 'Dashboard' && (
             <div className="space-y-6">
+              {dataRangeBar('Jumlah transaksi & ringkasan Rekap mengikuti rentang ini; stok barang tetap akurat.')}
               {PeriodFilter()}
               <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
                 <div onClick={() => goTab('Master Barang')} className={`p-5 rounded-xl border shadow-sm flex items-center justify-between cursor-pointer hover:border-blue-400 ${card}`}>
@@ -1426,6 +1530,7 @@ export default function App() {
           {/* ===================== STOK MASUK ===================== */}
           {activeTab === 'Stok Masuk' && (
             <div className="space-y-4">
+              {dataRangeBar('Hanya transaksi dalam rentang ini yang tampil. Pilih "Semua data" untuk riwayat lama.')}
               {PeriodFilter()}
               {SearchBox({ placeholder: "Cari kode, deskripsi, unit, No. PO, atau surat jalan..." })}
               <div className={`rounded-xl shadow-sm border overflow-x-auto ${card}`}>
@@ -1477,6 +1582,7 @@ export default function App() {
           {/* ===================== STOK KELUAR ===================== */}
           {activeTab === 'Stok Keluar' && (
             <div className="space-y-4">
+              {dataRangeBar('Hanya transaksi dalam rentang ini yang tampil. Pilih "Semua data" untuk riwayat lama.')}
               {PeriodFilter()}
               {SearchBox({ placeholder: "Cari kode, nama barang, unit, atau mekanik..." })}
               <div className={`rounded-xl shadow-sm border overflow-x-auto ${card}`}>
@@ -1548,8 +1654,8 @@ export default function App() {
                       <div className="flex items-baseline text-base font-bold" style={{ fontFamily: 'Arial, Helvetica, sans-serif', fontVariantNumeric: 'lining-nums tabular-nums' }}>
                         <span style={{ whiteSpace: 'pre' }}>{'No.   '}</span>
                         <span className="inline-grid border-b border-dotted">
-                          <span aria-hidden="true" style={{ gridArea: '1 / 1', visibility: 'hidden', whiteSpace: 'pre', lineHeight: 1.2 }}>{poHeader.noPo || '00000'}</span>
-                          <input className="po-input text-right font-bold" style={{ gridArea: '1 / 1', width: '100%', minWidth: 0, color: '#c0392b', fontFamily: 'Arial, Helvetica, sans-serif', fontVariantNumeric: 'lining-nums tabular-nums', lineHeight: 1.2 }} value={poHeader.noPo} onChange={(e) => setPoHeader({ ...poHeader, noPo: e.target.value })} />
+                          <span aria-hidden="true" style={{ gridArea: '1 / 1', color: 'transparent', background: 'transparent', userSelect: 'none', pointerEvents: 'none', whiteSpace: 'pre', lineHeight: 1.2 }}>{poHeader.noPo || '00000'}</span>
+                          <input className="po-input text-right font-bold" style={{ gridArea: '1 / 1', width: 0, minWidth: '100%', color: '#c0392b', fontFamily: 'Arial, Helvetica, sans-serif', fontVariantNumeric: 'lining-nums tabular-nums', lineHeight: 1.2 }} value={poHeader.noPo} onChange={(e) => setPoHeader({ ...poHeader, noPo: e.target.value })} />
                         </span>
                       </div>
                     </div>
@@ -1678,6 +1784,7 @@ export default function App() {
           {/* ===================== KARTU STOK ===================== */}
           {activeTab === 'Kartu Stok' && (
             <div className="space-y-4">
+              {dataRangeBar('Saldo awal sudah memperhitungkan transaksi sebelum rentang ini.')}
               <div className={`p-4 rounded-xl border shadow-sm flex flex-wrap items-center gap-3 ${card}`}>
                 <span className="text-xs font-semibold">Pilih Barang:</span>
                 <input type="text" placeholder="Cari kode / nama / part no..." value={kartuSearch} onChange={(e) => setKartuSearch(e.target.value)} className={`${selectClass} w-64`} />
@@ -1713,6 +1820,7 @@ export default function App() {
           {/* ===================== REKAP STOK ===================== */}
           {activeTab === 'Rekap Stok' && (
             <div className="space-y-4">
+              {dataRangeBar('TOTAL MASUK/KELUAR dihitung dari rentang ini; kolom STOK tetap stok sebenarnya.')}
               {SearchBox({ placeholder: "Cari kode, nama barang, material number, part unit, atau lokasi..." })}
               <div className={`rounded-xl shadow-sm border overflow-x-auto ${card}`}>
                 <div className="p-4 border-b flex justify-between items-center"><h3 className="font-bold text-sm">Rekap Persediaan</h3><button onClick={exportAll} className="bg-emerald-600 text-white px-3 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1.5"><Download size={14} /> Excel</button></div>
@@ -1744,6 +1852,7 @@ export default function App() {
           {/* ===================== LAPORAN ===================== */}
           {activeTab === 'Laporan' && (
             <div className="space-y-4">
+              {dataRangeBar('Laporan hanya memuat transaksi dalam rentang ini.')}
               {PeriodFilter()}
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 {[
