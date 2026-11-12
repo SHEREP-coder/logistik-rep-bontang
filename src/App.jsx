@@ -240,6 +240,11 @@ export default function App() {
   const [openFilter, setOpenFilter] = useState(null);
   const [cfSearch, setCfSearch] = useState('');
   const [cfDraft, setCfDraft] = useState(new Set());
+  const [colSort, setColSort] = useState({});   // { tabel: { col, dir: 'asc'|'desc' } }
+  const [colText, setColText] = useState({});   // { tabel: { kolom: { op, val } } }
+  const [cfTextOpen, setCfTextOpen] = useState(false);
+  const [cfTextOp, setCfTextOp] = useState('ct');
+  const [cfTextVal, setCfTextVal] = useState('');
   const [selectedMonth, setSelectedMonth] = useState('');
   const [selectedYear, setSelectedYear] = useState('');
   const [darkMode, setDarkMode] = useState(false);
@@ -535,21 +540,40 @@ export default function App() {
     }
   };
   const cfBase = { master: filteredMaterial, rekap: filteredMaterial, opname: filteredMaterial, masuk: filteredMasuk, keluar: filteredKeluar, arsip: [] };
-  const cfApply = (tbl, rows, except) => {
-    const f = colFilters[tbl]; if (!f) return rows;
-    const keys = Object.keys(f).filter((k) => k !== except && CF[tbl][k]);
-    if (!keys.length) return rows;
-    const sets = keys.map((k) => [CF[tbl][k][1], new Set(f[k])]);
-    return rows.filter((r) => sets.every(([g, st]) => st.has(String(g(r) ?? ''))));
+  const TEXT_OPS = [['eq', 'Sama dengan'], ['ne', 'Tidak sama dengan'], ['bw', 'Diawali dengan'], ['ew', 'Diakhiri dengan'], ['ct', 'Mengandung'], ['nc', 'Tidak mengandung'], ['gt', 'Lebih besar dari (angka)'], ['lt', 'Lebih kecil dari (angka)']];
+  const textOk = (val, op, q) => {
+    const v = String(val).toLowerCase(); const t = String(q).toLowerCase();
+    if (op === 'eq') return v === t; if (op === 'ne') return v !== t;
+    if (op === 'bw') return v.startsWith(t); if (op === 'ew') return v.endsWith(t);
+    if (op === 'ct') return v.includes(t); if (op === 'nc') return !v.includes(t);
+    const a = Number(String(val).replace(',', '.')); const b = Number(String(q).replace(',', '.'));
+    if (!Number.isFinite(a) || !Number.isFinite(b)) return false;
+    return op === 'gt' ? a > b : a < b;
+  };
+  const cfApply = (tbl, rows, except, noSort) => {
+    const f = colFilters[tbl] || {}; const tx = colText[tbl] || {};
+    const sets = Object.keys(f).filter((k) => k !== except && CF[tbl][k]).map((k) => [CF[tbl][k][1], new Set(f[k])]);
+    const txs = Object.keys(tx).filter((k) => k !== except && CF[tbl][k]).map((k) => [CF[tbl][k][1], tx[k].op, tx[k].val]);
+    let out = rows;
+    if (sets.length || txs.length) out = rows.filter((r) => sets.every(([g, st]) => st.has(String(g(r) ?? ''))) && txs.every(([g, op, v]) => textOk(String(g(r) ?? ''), op, v)));
+    const so = colSort[tbl];
+    if (!noSort && so && CF[tbl][so.col]) {
+      const g = CF[tbl][so.col][1]; const sk = CF[tbl][so.col][2]; const dir = so.dir === 'desc' ? -1 : 1;
+      const dec = out.map((r) => ({ r, k: sk ? String(sk(r)) : String(g(r) ?? '') }));
+      dec.sort((a, b) => dir * (sk ? a.k.localeCompare(b.k) : a.k.localeCompare(b.k, undefined, { numeric: true, sensitivity: 'base' })));
+      out = dec.map((x) => x.r);
+    }
+    return out;
   };
   const cfValues = (tbl, col) => {
     const [, g, sk] = CF[tbl][col];
     const m = new Map();
-    cfApply(tbl, cfBase[tbl] || [], col).forEach((r) => { const v = String(g(r) ?? ''); if (!m.has(v)) m.set(v, sk ? sk(r) : ''); });
+    cfApply(tbl, cfBase[tbl] || [], col, true).forEach((r) => { const v = String(g(r) ?? ''); if (!m.has(v)) m.set(v, sk ? sk(r) : ''); });
     const arr = [...m.entries()].map(([v, key]) => ({ v, key }));
-    if (CF[tbl][col][2]) arr.sort((a, b) => String(b.key).localeCompare(String(a.key)));
+    if (sk) arr.sort((a, b) => String(b.key).localeCompare(String(a.key)));
     else arr.sort((a, b) => a.v.localeCompare(b.v, undefined, { numeric: true, sensitivity: 'base' }));
-    return arr;
+    const blank = arr.filter((o) => o.v === ''); // (Kosong) selalu di paling bawah
+    return [...arr.filter((o) => o.v !== ''), ...blank];
   };
   const cfOpen = (e, tbl, col) => {
     const r = e.currentTarget.getBoundingClientRect();
@@ -557,6 +581,8 @@ export default function App() {
     const cur = colFilters[tbl]?.[col];
     setCfDraft(new Set(cur || vals.map((o) => o.v)));
     setCfSearch('');
+    const tx = colText[tbl]?.[col];
+    setCfTextOpen(!!tx); setCfTextOp(tx ? tx.op : 'ct'); setCfTextVal(tx ? tx.val : '');
     setOpenFilter({ tbl, col, vals, x: Math.max(8, Math.min(r.left, window.innerWidth - 300)), y: r.bottom + 6 });
   };
   const cfSave = () => {
@@ -565,26 +591,40 @@ export default function App() {
     setColFilters((prev) => { const t = { ...(prev[tbl] || {}) }; if (cfDraft.size >= vals.length) delete t[col]; else t[col] = [...cfDraft]; return { ...prev, [tbl]: t }; });
     setPage(1); setOpenFilter(null);
   };
-  const cfClearCol = (tbl, col) => { setColFilters((prev) => { const t = { ...(prev[tbl] || {}) }; delete t[col]; return { ...prev, [tbl]: t }; }); setPage(1); setOpenFilter(null); };
-  const cfClearAll = (tbl) => { setColFilters((prev) => ({ ...prev, [tbl]: {} })); setPage(1); };
+  const cfSaveText = () => {
+    const { tbl, col } = openFilter;
+    setColText((prev) => { const t = { ...(prev[tbl] || {}) }; if (String(cfTextVal).trim() === '') delete t[col]; else t[col] = { op: cfTextOp, val: cfTextVal }; return { ...prev, [tbl]: t }; });
+    setPage(1); setOpenFilter(null);
+  };
+  const cfSort = (dir) => { const { tbl, col } = openFilter; setColSort((prev) => ({ ...prev, [tbl]: dir ? { col, dir } : undefined })); setPage(1); setOpenFilter(null); };
+  const cfClearCol = (tbl, col) => {
+    setColFilters((prev) => { const t = { ...(prev[tbl] || {}) }; delete t[col]; return { ...prev, [tbl]: t }; });
+    setColText((prev) => { const t = { ...(prev[tbl] || {}) }; delete t[col]; return { ...prev, [tbl]: t }; });
+    setPage(1); setOpenFilter(null);
+  };
+  const cfClearAll = (tbl) => { setColFilters((prev) => ({ ...prev, [tbl]: {} })); setColText((prev) => ({ ...prev, [tbl]: {} })); setColSort((prev) => ({ ...prev, [tbl]: undefined })); setPage(1); };
   const TH = (tbl, col, label, cls = 'p-3') => {
-    const active = !!colFilters[tbl]?.[col];
+    const active = !!colFilters[tbl]?.[col] || !!colText[tbl]?.[col];
+    const so = colSort[tbl]?.col === col ? colSort[tbl].dir : null;
     return (
       <th className={cls}>
         <div className="flex items-center justify-center gap-1">
           <span>{label}</span>
-          <button type="button" title={`Filter kolom ${CF[tbl][col][0]}`} onClick={(e) => cfOpen(e, tbl, col)} className={`p-0.5 rounded shrink-0 ${active ? 'bg-amber-400 text-slate-950' : 'text-slate-400 hover:text-slate-700 hover:bg-slate-300/50'}`}><Filter size={12} /></button>
+          <button type="button" title={`Filter / urutkan kolom ${CF[tbl][col][0]}`} onClick={(e) => cfOpen(e, tbl, col)} className={`p-0.5 rounded shrink-0 inline-flex items-center gap-0.5 ${active || so ? 'bg-amber-400 text-slate-950' : 'text-slate-400 hover:text-slate-700 hover:bg-slate-300/50'}`}><Filter size={12} />{so && <span className="text-[9px] font-bold leading-none">{so === 'asc' ? '▲' : '▼'}</span>}</button>
         </div>
       </th>
     );
   };
   const cfBar = (tbl) => {
-    const act = Object.keys(colFilters[tbl] || {}).filter((k) => CF[tbl][k]);
-    if (!act.length) return null;
+    const act = [...new Set([...Object.keys(colFilters[tbl] || {}), ...Object.keys(colText[tbl] || {})])].filter((k) => CF[tbl][k]);
+    const so = colSort[tbl];
+    if (!act.length && !so) return null;
     return (
       <div className="px-4 py-2 rounded-xl border border-amber-300 bg-amber-50 text-amber-800 text-xs flex flex-wrap items-center gap-2">
-        <Filter size={12} /> <span className="font-semibold">Filter kolom aktif:</span>
+        <Filter size={12} />
+        {act.length > 0 && <span className="font-semibold">Filter kolom aktif:</span>}
         {act.map((k) => <span key={k} className="px-2 py-0.5 rounded-full bg-amber-200 font-semibold">{CF[tbl][k][0]}</span>)}
+        {so && CF[tbl][so.col] && <span className="px-2 py-0.5 rounded-full bg-amber-200 font-semibold">Urut: {CF[tbl][so.col][0]} {so.dir === 'asc' ? '▲ A–Z' : '▼ Z–A'}</span>}
         <button onClick={() => cfClearAll(tbl)} className="ml-auto px-3 py-1 bg-amber-500 hover:bg-amber-600 text-slate-950 font-bold rounded-lg">Hapus semua filter</button>
       </div>
     );
@@ -2120,34 +2160,58 @@ export default function App() {
       {/* ===================== POPOVER FILTER KOLOM ===================== */}
       {openFilter && (() => {
         const { tbl, col, vals, x, y } = openFilter;
+        const name = CF[tbl][col][0];
         const term = cfSearch.trim().toLowerCase();
         const shown = vals.filter((o) => !term || (o.v === '' ? '(kosong)' : o.v).toLowerCase().includes(term));
         const list = shown.slice(0, 300);
+        const allShown = shown.length > 0 && shown.every((o) => cfDraft.has(o.v));
+        const someShown = shown.some((o) => cfDraft.has(o.v));
         const box = darkMode ? 'bg-slate-800 border-slate-600 text-slate-100' : 'bg-white border-slate-300 text-slate-800';
+        const hov = darkMode ? 'hover:bg-slate-700' : 'hover:bg-slate-100';
+        const hasFilter = !!colFilters[tbl]?.[col] || !!colText[tbl]?.[col];
+        const curSort = colSort[tbl]?.col === col ? colSort[tbl].dir : null;
         const toggle = (v) => setCfDraft((prev) => { const n = new Set(prev); if (n.has(v)) n.delete(v); else n.add(v); return n; });
         return (
           <>
             <div className="fixed inset-0 z-[60]" onClick={() => setOpenFilter(null)} />
-            <div className={`fixed z-[61] w-72 rounded-xl border shadow-2xl p-3 text-xs ${box}`} style={{ left: x, top: Math.max(8, Math.min(y, window.innerHeight - 440)) }}>
-              <div className="font-bold mb-2 flex items-center justify-between"><span>Filter: {CF[tbl][col][0]}</span><button onClick={() => setOpenFilter(null)} className="p-0.5 rounded hover:bg-slate-500/20"><X size={14} /></button></div>
-              <input autoFocus value={cfSearch} onChange={(e) => setCfSearch(e.target.value)} placeholder="Cari nilai..." className={`w-full px-2 py-1.5 mb-2 rounded-lg border outline-none ${darkMode ? 'bg-slate-900 border-slate-600' : 'bg-white border-slate-300'}`} />
-              <div className="flex items-center gap-3 mb-1 font-semibold text-blue-500">
-                <button onClick={() => setCfDraft((prev) => { const n = new Set(prev); shown.forEach((o) => n.add(o.v)); return n; })}>Pilih semua</button>
-                <button onClick={() => setCfDraft((prev) => { const n = new Set(prev); shown.forEach((o) => n.delete(o.v)); return n; })}>Kosongkan</button>
-                <span className="ml-auto font-normal text-slate-400">{cfDraft.size}/{vals.length} dipilih</span>
-              </div>
-              <div className="max-h-56 overflow-y-auto border rounded-lg p-1 border-slate-400/30">
-                {list.length === 0 ? <div className="p-3 text-center text-slate-400">Tidak ada nilai.</div> : list.map((o) => (
-                  <label key={o.v === '' ? '__kosong' : o.v} className="flex items-center gap-2 py-1 px-1.5 rounded hover:bg-slate-500/10 cursor-pointer">
-                    <input type="checkbox" checked={cfDraft.has(o.v)} onChange={() => toggle(o.v)} />
-                    <span className="truncate">{o.v === '' ? '(kosong)' : o.v}</span>
+            <div className={`fixed z-[61] w-72 rounded-xl border shadow-2xl py-2 text-xs max-h-[88vh] overflow-y-auto ${box}`} style={{ left: x, top: Math.max(8, Math.min(y, window.innerHeight - 560)) }}>
+              <div className="px-3 pb-1 font-bold flex items-center justify-between"><span>Kolom: {name}</span><button onClick={() => setOpenFilter(null)} className="p-0.5 rounded hover:bg-slate-500/20"><X size={14} /></button></div>
+              <button onClick={() => cfSort('asc')} className={`w-full text-left px-3 py-2 flex items-center gap-2 ${hov} ${curSort === 'asc' ? 'font-bold text-blue-500' : ''}`}><span className="w-5 text-center font-bold">A↓</span> Urutkan A ke Z</button>
+              <button onClick={() => cfSort('desc')} className={`w-full text-left px-3 py-2 flex items-center gap-2 ${hov} ${curSort === 'desc' ? 'font-bold text-blue-500' : ''}`}><span className="w-5 text-center font-bold">Z↓</span> Urutkan Z ke A</button>
+              {curSort && <button onClick={() => cfSort(null)} className={`w-full text-left px-3 py-2 flex items-center gap-2 ${hov}`}><span className="w-5 text-center">✕</span> Hapus urutan</button>}
+              <div className="my-1 border-t border-slate-400/30" />
+              <button disabled={!hasFilter} onClick={() => cfClearCol(tbl, col)} className={`w-full text-left px-3 py-2 flex items-center gap-2 ${hasFilter ? hov : 'opacity-40 cursor-not-allowed'}`}><Filter size={13} className="w-5" /> Hapus Filter dari “{name}”</button>
+              <button onClick={() => setCfTextOpen((v) => !v)} className={`w-full text-left px-3 py-2 flex items-center gap-2 ${hov}`}><span className="w-5 text-center">T</span> Filter Teks <span className="ml-auto">{cfTextOpen ? '▾' : '▸'}</span></button>
+              {cfTextOpen && (
+                <div className="mx-3 mb-2 p-2 rounded-lg border border-slate-400/30 space-y-2">
+                  <select value={cfTextOp} onChange={(e) => setCfTextOp(e.target.value)} className={`w-full px-2 py-1.5 rounded-lg border ${darkMode ? 'bg-slate-900 border-slate-600' : 'bg-white border-slate-300'}`}>
+                    {TEXT_OPS.map(([k, l]) => <option key={k} value={k}>{l}</option>)}
+                  </select>
+                  <input value={cfTextVal} onChange={(e) => setCfTextVal(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && cfSaveText()} placeholder="Nilai..." className={`w-full px-2 py-1.5 rounded-lg border outline-none ${darkMode ? 'bg-slate-900 border-slate-600' : 'bg-white border-slate-300'}`} />
+                  <button onClick={cfSaveText} className="w-full px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-lg">Terapkan Filter Teks</button>
+                </div>
+              )}
+              <div className="my-1 border-t border-slate-400/30" />
+              <div className="px-3">
+                <input value={cfSearch} onChange={(e) => setCfSearch(e.target.value)} placeholder="Cari..." className={`w-full px-2 py-1.5 mb-2 rounded-lg border outline-none ${darkMode ? 'bg-slate-900 border-slate-600' : 'bg-white border-slate-300'}`} />
+                <div className="max-h-52 overflow-y-auto border rounded-lg p-1 border-slate-400/30">
+                  <label className="flex items-center gap-2 py-1 px-1.5 rounded hover:bg-slate-500/10 cursor-pointer font-semibold">
+                    <input type="checkbox" checked={allShown} ref={(el) => { if (el) el.indeterminate = someShown && !allShown; }}
+                      onChange={() => setCfDraft((prev) => { const n = new Set(prev); if (allShown) shown.forEach((o) => n.delete(o.v)); else shown.forEach((o) => n.add(o.v)); return n; })} />
+                    <span>(Pilih Semua)</span>
                   </label>
-                ))}
-              </div>
-              {shown.length > 300 && <div className="mt-1 text-[10px] text-slate-400">Menampilkan 300 dari {shown.length} nilai. Gunakan kotak cari untuk mempersempit.</div>}
-              <div className="flex items-center gap-2 mt-3">
-                <button onClick={cfSave} disabled={cfDraft.size === 0} className="flex-1 px-3 py-1.5 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white font-bold rounded-lg">Terapkan</button>
-                <button onClick={() => cfClearCol(tbl, col)} className="px-3 py-1.5 border border-slate-400/50 rounded-lg font-semibold">Reset</button>
+                  {list.length === 0 ? <div className="p-3 text-center text-slate-400">Tidak ada nilai.</div> : list.map((o) => (
+                    <label key={o.v === '' ? '__kosong' : o.v} className="flex items-center gap-2 py-1 px-1.5 pl-5 rounded hover:bg-slate-500/10 cursor-pointer">
+                      <input type="checkbox" checked={cfDraft.has(o.v)} onChange={() => toggle(o.v)} />
+                      <span className="truncate">{o.v === '' ? '(Kosong)' : o.v}</span>
+                    </label>
+                  ))}
+                </div>
+                {shown.length > 300 && <div className="mt-1 text-[10px] text-slate-400">Menampilkan 300 dari {shown.length} nilai. Gunakan kotak cari untuk mempersempit.</div>}
+                <div className="flex items-center gap-2 mt-3">
+                  <button onClick={cfSave} disabled={cfDraft.size === 0} className="flex-1 px-3 py-1.5 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white font-bold rounded-lg">OK</button>
+                  <button onClick={() => setOpenFilter(null)} className="px-3 py-1.5 border border-slate-400/50 rounded-lg font-semibold">Batal</button>
+                </div>
               </div>
             </div>
           </>
