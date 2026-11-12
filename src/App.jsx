@@ -4,7 +4,7 @@ import {
   Search, Plus, LayoutDashboard, Box, ArrowDownToLine, ArrowUpFromLine,
   FileText, ClipboardList, BookOpen, BarChart3, Users, Settings, Moon, TrendingUp,
   TrendingDown, Calendar, X, Download, Trash2, AlertTriangle, ShoppingCart, Barcode,
-  Printer, History, LogOut, Pencil, Upload, Lock, Save, FilePlus2
+  Printer, History, LogOut, Pencil, Upload, Lock, Save, FilePlus2, Filter
 } from 'lucide-react';
 
 import { initializeApp } from 'firebase/app';
@@ -96,11 +96,11 @@ const enterNext = (e) => {
   }
 };
 
-// Availability (%) = (Qty - Kekurangan Supply) / Qty x 100
+// Availability (%) = Qty / (Kekurangan Supply + Qty) x 100  (kekurangan dibaca sebagai angka positif, mis. -2 atau 2 sama-sama dihitung 2)
 const availPct = (qty, kek) => {
-  const q = Number(qty); const k = Number(kek || 0);
+  const q = Number(qty); const k = Math.abs(Number(kek || 0));
   if (!Number.isFinite(q) || q <= 0 || !Number.isFinite(k)) return null;
-  return Math.max(0, Math.min(100, ((q - k) / q) * 100));
+  return Math.max(0, Math.min(100, (q / (k + q)) * 100));
 };
 const fmtPct = (v) => (v === null ? '-' : `${String(Math.round(v * 10) / 10).replace('.', ',')}%`);
 const withAvail = (r) => { const a = availPct(r.Qty, r['Kekurangan Supply']); return { ...r, 'Availability (%)': a === null ? '' : Math.round(a * 10) / 10 }; };
@@ -236,6 +236,10 @@ export default function App() {
   const [activeTab, setActiveTab] = useState('Dashboard');
   const [pencarian, setPencarian] = useState('');
   const [page, setPage] = useState(1);
+  const [colFilters, setColFilters] = useState({}); // filter kolom: { tabel: { kolom: [nilai terpilih] } }
+  const [openFilter, setOpenFilter] = useState(null);
+  const [cfSearch, setCfSearch] = useState('');
+  const [cfDraft, setCfDraft] = useState(new Set());
   const [selectedMonth, setSelectedMonth] = useState('');
   const [selectedYear, setSelectedYear] = useState('');
   const [darkMode, setDarkMode] = useState(false);
@@ -485,6 +489,111 @@ export default function App() {
     dataKeluar.forEach((r) => { const k = String(r.Kode || '').toLowerCase(); const c = t.get(k) || { in: 0, out: 0 }; c.out += Number(r.Qty || 0); t.set(k, c); });
     return t;
   }, [dataMasuk, dataKeluar]);
+
+  /* ---------- FILTER KOLOM (tombol di header tabel) ---------- */
+  const kk = (i) => String(i.Kode || '').toLowerCase();
+  const tot = (i) => totalsByKode.get(kk(i)) || { in: 0, out: 0 };
+  const CF = {
+    master: {
+      kode: ['Kode / Barcode', (i) => i.Kode || ''], nama: ['Nama Barang', (i) => i['Nama Barang'] || ''],
+      nomor: ['Material Number', (i) => String(i['Nomor Barang'] ?? '')], part: ['Part Unit', (i) => i['Part Unit'] || ''],
+      base: ['Base Unit of Measure', (i) => i['Base Unit of Measure'] || ''], satuan: ['Satuan', (i) => i.Satuan || ''],
+      lokasi: ['Lokasi', (i) => i.Lokasi || 'Rak A1'], min: ['Min', (i) => String(Number(i.MinQty ?? 5))],
+      stok: ['Stok', (i) => String(Number(i.Qty || 0))],
+      status: ['Status PO', (i) => (Number(i.Qty || 0) <= Number(i.MinQty ?? 5) ? 'Perlu Order PO' : 'Aman')]
+    },
+    rekap: {
+      kode: ['Kode', (i) => i.Kode || ''], nama: ['Nama Barang', (i) => i['Nama Barang'] || ''],
+      nomor: ['Material Number', (i) => String(i['Nomor Barang'] ?? '')], part: ['Part Unit', (i) => i['Part Unit'] || ''],
+      lokasi: ['Lokasi', (i) => i.Lokasi || 'Rak A1'], masuk: ['Total Masuk', (i) => String(tot(i).in)],
+      keluar: ['Total Keluar', (i) => String(tot(i).out)], stok: ['Stok', (i) => String(i.Qty ?? 0)]
+    },
+    opname: {
+      kode: ['Kode', (i) => i.Kode || ''], nama: ['Nama Barang', (i) => i['Nama Barang'] || ''],
+      nomor: ['Material Number', (i) => String(i['Nomor Barang'] ?? '')], lokasi: ['Lokasi', (i) => i.Lokasi || 'Rak A1'],
+      sistem: ['Sistem', (i) => String(Number(i.Qty) || 0)],
+      selisih: ['Selisih', (i) => { const sys = Number(i.Qty) || 0; const raw = physicalStocks[i.id]; const ph = raw === undefined || raw === '' ? sys : Number(raw); return ph - sys === 0 ? 'Sesuai' : 'Ada selisih'; }]
+    },
+    masuk: {
+      tanggal: ['Tanggal', (i) => fmtDate(i.Tanggal), (i) => toISODate(i.Tanggal)], unit: ['Unit', (i) => i.Unit || ''], kode: ['Kode', (i) => i.Kode || ''],
+      nomor: ['Material Number', (i) => String(i['Material Number'] || materialByKode.get(kk(i))?.['Nomor Barang'] || '')],
+      desk: ['Deskripsi', (i) => i.Description || ''], merk: ['Merk', (i) => String(i.Merk ?? '')], po: ['No P.O', (i) => i['No. PO'] || ''],
+      sj: ['No Surat Jalan', (i) => i['No. Surat Jalan'] || ''], qty: ['Qty', (i) => String(i.Qty ?? '')],
+      kek: ['Kekurangan Supply', (i) => (Number(i['Kekurangan Supply'] || 0) !== 0 ? String(i['Kekurangan Supply']) : '-')],
+      avail: ['Availability', (i) => fmtPct(availPct(i.Qty, i['Kekurangan Supply']))], ket: ['Keterangan', (i) => i.Keterangan || '']
+    },
+    keluar: {
+      tanggal: ['Tanggal', (i) => fmtDate(i['Doc.Date']), (i) => toISODate(i['Doc.Date'])], unit: ['Unit', (i) => i.Unit || ''], kode: ['Kode', (i) => i.Kode || ''],
+      nomor: ['Material Number', (i) => String(i['Nomor Barang'] || materialByKode.get(kk(i))?.['Nomor Barang'] || '')],
+      nama: ['Nama Barang', (i) => i['Nama Barang'] || ''], mekanik: ['Mekanik', (i) => i.Mekanik || ''], wo: ['No. WO', (i) => i['No. WO'] || ''],
+      hmkm: ['HM/KM', (i) => String(i.HM_KM ?? '')], ket: ['Keterangan', (i) => i.Keterangan || ''], qty: ['Qty', (i) => String(i.Qty ?? '')]
+    },
+    arsip: {
+      nopo: ['No. PO', (p) => p.noPo || ''], tanggal: ['Tanggal', (p) => fmtDate(p.tanggal), (p) => toISODate(p.tanggal)],
+      equipment: ['Equipment', (p) => p.equipment || ''], kodealat: ['Kode Alat', (p) => p.kodeAlat || ''],
+      jml: ['Jml Item', (p) => String((p.items || []).length)], dibuat: ['Dibuat Oleh', (p) => p.dibuatOleh || '']
+    }
+  };
+  const cfBase = { master: filteredMaterial, rekap: filteredMaterial, opname: filteredMaterial, masuk: filteredMasuk, keluar: filteredKeluar, arsip: [] };
+  const cfApply = (tbl, rows, except) => {
+    const f = colFilters[tbl]; if (!f) return rows;
+    const keys = Object.keys(f).filter((k) => k !== except && CF[tbl][k]);
+    if (!keys.length) return rows;
+    const sets = keys.map((k) => [CF[tbl][k][1], new Set(f[k])]);
+    return rows.filter((r) => sets.every(([g, st]) => st.has(String(g(r) ?? ''))));
+  };
+  const cfValues = (tbl, col) => {
+    const [, g, sk] = CF[tbl][col];
+    const m = new Map();
+    cfApply(tbl, cfBase[tbl] || [], col).forEach((r) => { const v = String(g(r) ?? ''); if (!m.has(v)) m.set(v, sk ? sk(r) : ''); });
+    const arr = [...m.entries()].map(([v, key]) => ({ v, key }));
+    if (CF[tbl][col][2]) arr.sort((a, b) => String(b.key).localeCompare(String(a.key)));
+    else arr.sort((a, b) => a.v.localeCompare(b.v, undefined, { numeric: true, sensitivity: 'base' }));
+    return arr;
+  };
+  const cfOpen = (e, tbl, col) => {
+    const r = e.currentTarget.getBoundingClientRect();
+    const vals = cfValues(tbl, col);
+    const cur = colFilters[tbl]?.[col];
+    setCfDraft(new Set(cur || vals.map((o) => o.v)));
+    setCfSearch('');
+    setOpenFilter({ tbl, col, vals, x: Math.max(8, Math.min(r.left, window.innerWidth - 300)), y: r.bottom + 6 });
+  };
+  const cfSave = () => {
+    const { tbl, col, vals } = openFilter;
+    if (cfDraft.size === 0) return;
+    setColFilters((prev) => { const t = { ...(prev[tbl] || {}) }; if (cfDraft.size >= vals.length) delete t[col]; else t[col] = [...cfDraft]; return { ...prev, [tbl]: t }; });
+    setPage(1); setOpenFilter(null);
+  };
+  const cfClearCol = (tbl, col) => { setColFilters((prev) => { const t = { ...(prev[tbl] || {}) }; delete t[col]; return { ...prev, [tbl]: t }; }); setPage(1); setOpenFilter(null); };
+  const cfClearAll = (tbl) => { setColFilters((prev) => ({ ...prev, [tbl]: {} })); setPage(1); };
+  const TH = (tbl, col, label, cls = 'p-3') => {
+    const active = !!colFilters[tbl]?.[col];
+    return (
+      <th className={cls}>
+        <div className="flex items-center justify-center gap-1">
+          <span>{label}</span>
+          <button type="button" title={`Filter kolom ${CF[tbl][col][0]}`} onClick={(e) => cfOpen(e, tbl, col)} className={`p-0.5 rounded shrink-0 ${active ? 'bg-amber-400 text-slate-950' : 'text-slate-400 hover:text-slate-700 hover:bg-slate-300/50'}`}><Filter size={12} /></button>
+        </div>
+      </th>
+    );
+  };
+  const cfBar = (tbl) => {
+    const act = Object.keys(colFilters[tbl] || {}).filter((k) => CF[tbl][k]);
+    if (!act.length) return null;
+    return (
+      <div className="px-4 py-2 rounded-xl border border-amber-300 bg-amber-50 text-amber-800 text-xs flex flex-wrap items-center gap-2">
+        <Filter size={12} /> <span className="font-semibold">Filter kolom aktif:</span>
+        {act.map((k) => <span key={k} className="px-2 py-0.5 rounded-full bg-amber-200 font-semibold">{CF[tbl][k][0]}</span>)}
+        <button onClick={() => cfClearAll(tbl)} className="ml-auto px-3 py-1 bg-amber-500 hover:bg-amber-600 text-slate-950 font-bold rounded-lg">Hapus semua filter</button>
+      </div>
+    );
+  };
+  const masterRows = cfApply('master', filteredMaterial);
+  const rekapRows = cfApply('rekap', filteredMaterial);
+  const opnameRows = cfApply('opname', filteredMaterial);
+  const masukRows = cfApply('masuk', filteredMasuk);
+  const keluarRows = cfApply('keluar', filteredKeluar);
 
   const paged = (arr) => {
     const tp = Math.ceil(arr.length / ROWS) || 1;
@@ -1489,15 +1598,16 @@ export default function App() {
           {activeTab === 'Master Barang' && (
             <div className="space-y-4">
               {SearchBox({ placeholder: "Cari nama barang, kode barcode, part number, atau lokasi..." })}
+              {cfBar('master')}
               <div className={`rounded-xl shadow-sm border overflow-x-auto ${card}`}>
                 <table className="w-full min-w-[1050px] text-left text-sm">
                   <thead className={`border-b font-semibold leading-tight ${thead}`}>
-                    <tr><th className="p-3">KODE /<br />BARCODE</th><th className="p-3">NAMA BARANG</th><th className="p-3">MATERIAL<br />NUMBER</th><th className="p-3">PART UNIT</th><th className="p-3">BASE UNIT<br />OF MEASURE</th><th className="p-3 text-center">SATUAN</th><th className="p-3">LOKASI</th><th className="p-3 text-center">MIN</th><th className="p-3 text-center">STOK</th><th className="p-3 text-center">STATUS<br />PO</th>{canEdit && <th className="p-3 text-center">AKSI</th>}</tr>
+                    <tr>{TH('master','kode',<>KODE /<br />BARCODE</>,'p-3')}{TH('master','nama','NAMA BARANG','p-3')}{TH('master','nomor',<>MATERIAL<br />NUMBER</>,'p-3')}{TH('master','part','PART UNIT','p-3')}{TH('master','base',<>BASE UNIT<br />OF MEASURE</>,'p-3')}{TH('master','satuan','SATUAN','p-3 text-center')}{TH('master','lokasi','LOKASI','p-3')}{TH('master','min','MIN','p-3 text-center')}{TH('master','stok','STOK','p-3 text-center')}{TH('master','status',<>STATUS<br />PO</>,'p-3 text-center')}{canEdit && <th className="p-3 text-center">AKSI</th>}</tr>
                   </thead>
                   <tbody className={`divide-y ${divide}`}>
-                    {filteredMaterial.length === 0 ? (
+                    {masterRows.length === 0 ? (
                       <tr><td colSpan="11" className="p-8 text-center text-slate-400">Tidak ada data ditemukan.</td></tr>
-                    ) : paged(filteredMaterial).map((item) => {
+                    ) : paged(masterRows).map((item) => {
                       const qn = Number(item.Qty || 0); const minQ = Number(item.MinQty ?? 5);
                       return (
                         <tr key={item.id} className={hoverRow}>
@@ -1522,7 +1632,7 @@ export default function App() {
                     })}
                   </tbody>
                 </table>
-                <Pager page={page} setPage={setPage} total={filteredMaterial.length} dark={darkMode} />
+                <Pager page={page} setPage={setPage} total={masterRows.length} dark={darkMode} />
               </div>
             </div>
           )}
@@ -1533,19 +1643,20 @@ export default function App() {
               {dataRangeBar('Hanya transaksi dalam rentang ini yang tampil. Pilih "Semua data" untuk riwayat lama.')}
               {PeriodFilter()}
               {SearchBox({ placeholder: "Cari kode, deskripsi, unit, No. PO, atau surat jalan..." })}
+              {cfBar('masuk')}
               <div className={`rounded-xl shadow-sm border overflow-x-auto ${card}`}>
                 <table className="w-full min-w-[1350px] text-left text-sm">
                   <thead className={`border-b font-semibold leading-tight ${thead}`}>
                     <tr>
-                      <th className="p-3">TANGGAL</th><th className="p-3">UNIT</th><th className="p-3">KODE</th>
-                      <th className="p-3">MATERIAL<br />NUMBER</th><th className="p-3">DESKRIPSI</th><th className="p-3">MERK</th>
-                      <th className="p-3 whitespace-nowrap">NO P.O</th><th className="p-3 whitespace-nowrap">NO SURAT JALAN</th><th className="p-3">QTY</th>
-                      <th className="p-3 text-center">KEKURANGAN<br />SUPPLY</th><th className="p-3 text-center">AVAILABILITY</th>
-                      <th className="p-3">KETERANGAN</th>{canEdit && <th className="p-3 text-center">AKSI</th>}
+                      {TH('masuk','tanggal','TANGGAL','p-3')}{TH('masuk','unit','UNIT','p-3')}{TH('masuk','kode','KODE','p-3')}
+                      {TH('masuk','nomor',<>MATERIAL<br />NUMBER</>,'p-3')}{TH('masuk','desk','DESKRIPSI','p-3')}{TH('masuk','merk','MERK','p-3')}
+                      {TH('masuk','po','NO P.O','p-3 whitespace-nowrap')}{TH('masuk','sj','NO SURAT JALAN','p-3 whitespace-nowrap')}{TH('masuk','qty','QTY','p-3')}
+                      {TH('masuk','kek',<>KEKURANGAN<br />SUPPLY</>,'p-3 text-center')}{TH('masuk','avail','AVAILABILITY','p-3 text-center')}
+                      {TH('masuk','ket','KETERANGAN','p-3')}{canEdit && <th className="p-3 text-center">AKSI</th>}
                     </tr>
                   </thead>
                   <tbody className={`divide-y ${divide}`}>
-                    {filteredMasuk.length === 0 ? <tr><td colSpan="13" className="p-8 text-center text-slate-400">Tidak ada transaksi.</td></tr> : paged(filteredMasuk).map((item) => {
+                    {masukRows.length === 0 ? <tr><td colSpan="13" className="p-8 text-center text-slate-400">Tidak ada transaksi.</td></tr> : paged(masukRows).map((item) => {
                       const av = availPct(item.Qty, item['Kekurangan Supply']);
                       const kk = item['Kekurangan Supply'];
                       const matNo = item['Material Number'] || materialByKode.get(String(item.Kode || '').toLowerCase())?.['Nomor Barang'] || '';
@@ -1574,7 +1685,7 @@ export default function App() {
                     })}
                   </tbody>
                 </table>
-                <Pager page={page} setPage={setPage} total={filteredMasuk.length} dark={darkMode} />
+                <Pager page={page} setPage={setPage} total={masukRows.length} dark={darkMode} />
               </div>
             </div>
           )}
@@ -1585,18 +1696,19 @@ export default function App() {
               {dataRangeBar('Hanya transaksi dalam rentang ini yang tampil. Pilih "Semua data" untuk riwayat lama.')}
               {PeriodFilter()}
               {SearchBox({ placeholder: "Cari kode, nama barang, unit, atau mekanik..." })}
+              {cfBar('keluar')}
               <div className={`rounded-xl shadow-sm border overflow-x-auto ${card}`}>
                 <table className="w-full min-w-[1200px] text-left text-sm">
                   <thead className={`border-b font-semibold leading-tight ${thead}`}>
                     <tr>
-                      <th className="p-3">TANGGAL</th><th className="p-3">UNIT</th><th className="p-3">KODE</th>
-                      <th className="p-3">MATERIAL<br />NUMBER</th><th className="p-3">NAMA BARANG</th><th className="p-3">MEKANIK</th>
-                      <th className="p-3">NO. WO</th><th className="p-3">HM/KM</th><th className="p-3">KETERANGAN</th><th className="p-3">QTY</th>
+                      {TH('keluar','tanggal','TANGGAL','p-3')}{TH('keluar','unit','UNIT','p-3')}{TH('keluar','kode','KODE','p-3')}
+                      {TH('keluar','nomor',<>MATERIAL<br />NUMBER</>,'p-3')}{TH('keluar','nama','NAMA BARANG','p-3')}{TH('keluar','mekanik','MEKANIK','p-3')}
+                      {TH('keluar','wo','NO. WO','p-3')}{TH('keluar','hmkm','HM/KM','p-3')}{TH('keluar','ket','KETERANGAN','p-3')}{TH('keluar','qty','QTY','p-3')}
                       {canEdit && <th className="p-3 text-center">AKSI</th>}
                     </tr>
                   </thead>
                   <tbody className={`divide-y ${divide}`}>
-                    {filteredKeluar.length === 0 ? <tr><td colSpan="11" className="p-8 text-center text-slate-400">Tidak ada transaksi.</td></tr> : paged(filteredKeluar).map((item) => {
+                    {keluarRows.length === 0 ? <tr><td colSpan="11" className="p-8 text-center text-slate-400">Tidak ada transaksi.</td></tr> : paged(keluarRows).map((item) => {
                       const noBrg = item['Nomor Barang'] || materialByKode.get(String(item.Kode || '').toLowerCase())?.['Nomor Barang'] || '';
                       return (
                         <tr key={item.id} className={hoverRow}>
@@ -1621,7 +1733,7 @@ export default function App() {
                     })}
                   </tbody>
                 </table>
-                <Pager page={page} setPage={setPage} total={filteredKeluar.length} dark={darkMode} />
+                <Pager page={page} setPage={setPage} total={keluarRows.length} dark={darkMode} />
               </div>
             </div>
           )}
@@ -1716,16 +1828,19 @@ export default function App() {
             const list = [...riwayatPo]
               .filter((p) => !q || has(p.noPo) || has(p.equipment) || has(p.kodeAlat) || (p.items || []).some((i) => has(i.uraian) || has(i.partNumber)))
               .sort((a, b) => poNumberValue(b.noPo) - poNumberValue(a.noPo));
+            cfBase.arsip = list;
+            const listF = cfApply('arsip', list);
             return (
               <div className="space-y-4">
                 {SearchBox({ placeholder: "Cari no. PO, equipment, kode alat, atau nama barang..." })}
+                {cfBar('arsip')}
                 <div className={`rounded-xl shadow-sm border overflow-x-auto ${card}`}>
                   <table className="w-full min-w-[860px] text-left text-sm">
                     <thead className={`border-b font-semibold ${thead}`}>
-                      <tr><th className="p-3.5">NO. PO</th><th className="p-3.5">TANGGAL</th><th className="p-3.5">EQUIPMENT</th><th className="p-3.5">KODE ALAT</th><th className="p-3.5 text-center">JML ITEM</th><th className="p-3.5">DIBUAT OLEH</th><th className="p-3.5 text-center">AKSI</th></tr>
+                      <tr>{TH('arsip','nopo','NO. PO','p-3.5')}{TH('arsip','tanggal','TANGGAL','p-3.5')}{TH('arsip','equipment','EQUIPMENT','p-3.5')}{TH('arsip','kodealat','KODE ALAT','p-3.5')}{TH('arsip','jml','JML ITEM','p-3.5 text-center')}{TH('arsip','dibuat','DIBUAT OLEH','p-3.5')}<th className="p-3.5 text-center">AKSI</th></tr>
                     </thead>
                     <tbody className={`divide-y ${divide}`}>
-                      {list.length === 0 ? <tr><td colSpan="7" className="p-8 text-center text-slate-400">Belum ada PO tersimpan.</td></tr> : paged(list).map((po) => (
+                      {listF.length === 0 ? <tr><td colSpan="7" className="p-8 text-center text-slate-400">Belum ada PO tersimpan.</td></tr> : paged(listF).map((po) => (
                         <tr key={po.id} className={hoverRow}>
                           <td className="p-3.5 font-bold text-red-600">{po.noPo}</td><td className="p-3.5">{fmtDate(po.tanggal)}</td>
                           <td className="p-3.5">{po.equipment}</td><td className="p-3.5">{po.kodeAlat}</td>
@@ -1738,7 +1853,7 @@ export default function App() {
                       ))}
                     </tbody>
                   </table>
-                  <Pager page={page} setPage={setPage} total={list.length} dark={darkMode} />
+                  <Pager page={page} setPage={setPage} total={listF.length} dark={darkMode} />
                 </div>
               </div>
             );
@@ -1752,13 +1867,14 @@ export default function App() {
                 {canEdit && <button onClick={saveOpname} disabled={saving || opnameChanges.length === 0} className="bg-emerald-600 disabled:opacity-50 text-white px-4 py-2 rounded-lg text-xs font-semibold shadow flex items-center gap-1.5"><Save size={14} /> Simpan Opname</button>}
               </div>
               {SearchBox({ placeholder: "Cari kode, nama barang, material number, atau lokasi..." })}
+              {cfBar('opname')}
               <div className={`rounded-xl shadow-sm border overflow-x-auto ${card}`}>
                 <table className="w-full min-w-[860px] text-left text-sm">
                   <thead className={`border-b font-semibold ${thead}`}>
-                    <tr><th className="p-3.5 text-center">KODE</th><th className="p-3.5 text-center">NAMA BARANG</th><th className="p-3.5 text-center">MATERIAL<br />NUMBER</th><th className="p-3.5 text-center">LOKASI</th><th className="p-3.5 text-center">SISTEM</th><th className="p-3.5 text-center">FISIK</th><th className="p-3.5 text-center">SELISIH</th></tr>
+                    <tr>{TH('opname','kode','KODE','p-3.5 text-center')}{TH('opname','nama','NAMA BARANG','p-3.5 text-center')}{TH('opname','nomor',<>MATERIAL<br />NUMBER</>,'p-3.5 text-center')}{TH('opname','lokasi','LOKASI','p-3.5 text-center')}{TH('opname','sistem','SISTEM','p-3.5 text-center')}<th className="p-3.5 text-center">FISIK</th>{TH('opname','selisih','SELISIH','p-3.5 text-center')}</tr>
                   </thead>
                   <tbody className={`divide-y ${divide}`}>
-                    {paged(filteredMaterial).map((item) => {
+                    {paged(opnameRows).map((item) => {
                       const sys = Number(item.Qty) || 0;
                       const raw = physicalStocks[item.id];
                       const phys = raw === undefined || raw === '' ? sys : Number(raw);
@@ -1776,7 +1892,7 @@ export default function App() {
                     })}
                   </tbody>
                 </table>
-                <Pager page={page} setPage={setPage} total={filteredMaterial.length} dark={darkMode} />
+                <Pager page={page} setPage={setPage} total={opnameRows.length} dark={darkMode} />
               </div>
             </div>
           )}
@@ -1822,14 +1938,15 @@ export default function App() {
             <div className="space-y-4">
               {dataRangeBar('TOTAL MASUK/KELUAR dihitung dari rentang ini; kolom STOK tetap stok sebenarnya.')}
               {SearchBox({ placeholder: "Cari kode, nama barang, material number, part unit, atau lokasi..." })}
+              {cfBar('rekap')}
               <div className={`rounded-xl shadow-sm border overflow-x-auto ${card}`}>
                 <div className="p-4 border-b flex justify-between items-center"><h3 className="font-bold text-sm">Rekap Persediaan</h3><button onClick={exportAll} className="bg-emerald-600 text-white px-3 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1.5"><Download size={14} /> Excel</button></div>
                 <table className="w-full min-w-[860px] text-left text-sm">
                   <thead className={`border-b font-semibold ${thead}`}>
-                    <tr><th className="p-3.5 text-center">KODE</th><th className="p-3.5 text-center">NAMA BARANG</th><th className="p-3.5 text-center">MATERIAL<br />NUMBER</th><th className="p-3.5 text-center">PART UNIT</th><th className="p-3.5 text-center">LOKASI</th><th className="p-3.5 text-center">TOTAL MASUK</th><th className="p-3.5 text-center">TOTAL KELUAR</th><th className="p-3.5 text-center">STOK</th></tr>
+                    <tr>{TH('rekap','kode','KODE','p-3.5 text-center')}{TH('rekap','nama','NAMA BARANG','p-3.5 text-center')}{TH('rekap','nomor',<>MATERIAL<br />NUMBER</>,'p-3.5 text-center')}{TH('rekap','part','PART UNIT','p-3.5 text-center')}{TH('rekap','lokasi','LOKASI','p-3.5 text-center')}{TH('rekap','masuk','TOTAL MASUK','p-3.5 text-center')}{TH('rekap','keluar','TOTAL KELUAR','p-3.5 text-center')}{TH('rekap','stok','STOK','p-3.5 text-center')}</tr>
                   </thead>
                   <tbody className={`divide-y ${divide}`}>
-                    {paged(filteredMaterial).map((item) => {
+                    {paged(rekapRows).map((item) => {
                       const t = totalsByKode.get(String(item.Kode || '').toLowerCase()) || { in: 0, out: 0 };
                       return (
                         <tr key={item.id} className={hoverRow}>
@@ -1844,7 +1961,7 @@ export default function App() {
                     })}
                   </tbody>
                 </table>
-                <Pager page={page} setPage={setPage} total={filteredMaterial.length} dark={darkMode} />
+                <Pager page={page} setPage={setPage} total={rekapRows.length} dark={darkMode} />
               </div>
             </div>
           )}
@@ -1999,6 +2116,43 @@ export default function App() {
           </form>
         </Modal>
       )}
+
+      {/* ===================== POPOVER FILTER KOLOM ===================== */}
+      {openFilter && (() => {
+        const { tbl, col, vals, x, y } = openFilter;
+        const term = cfSearch.trim().toLowerCase();
+        const shown = vals.filter((o) => !term || (o.v === '' ? '(kosong)' : o.v).toLowerCase().includes(term));
+        const list = shown.slice(0, 300);
+        const box = darkMode ? 'bg-slate-800 border-slate-600 text-slate-100' : 'bg-white border-slate-300 text-slate-800';
+        const toggle = (v) => setCfDraft((prev) => { const n = new Set(prev); if (n.has(v)) n.delete(v); else n.add(v); return n; });
+        return (
+          <>
+            <div className="fixed inset-0 z-[60]" onClick={() => setOpenFilter(null)} />
+            <div className={`fixed z-[61] w-72 rounded-xl border shadow-2xl p-3 text-xs ${box}`} style={{ left: x, top: Math.max(8, Math.min(y, window.innerHeight - 440)) }}>
+              <div className="font-bold mb-2 flex items-center justify-between"><span>Filter: {CF[tbl][col][0]}</span><button onClick={() => setOpenFilter(null)} className="p-0.5 rounded hover:bg-slate-500/20"><X size={14} /></button></div>
+              <input autoFocus value={cfSearch} onChange={(e) => setCfSearch(e.target.value)} placeholder="Cari nilai..." className={`w-full px-2 py-1.5 mb-2 rounded-lg border outline-none ${darkMode ? 'bg-slate-900 border-slate-600' : 'bg-white border-slate-300'}`} />
+              <div className="flex items-center gap-3 mb-1 font-semibold text-blue-500">
+                <button onClick={() => setCfDraft((prev) => { const n = new Set(prev); shown.forEach((o) => n.add(o.v)); return n; })}>Pilih semua</button>
+                <button onClick={() => setCfDraft((prev) => { const n = new Set(prev); shown.forEach((o) => n.delete(o.v)); return n; })}>Kosongkan</button>
+                <span className="ml-auto font-normal text-slate-400">{cfDraft.size}/{vals.length} dipilih</span>
+              </div>
+              <div className="max-h-56 overflow-y-auto border rounded-lg p-1 border-slate-400/30">
+                {list.length === 0 ? <div className="p-3 text-center text-slate-400">Tidak ada nilai.</div> : list.map((o) => (
+                  <label key={o.v === '' ? '__kosong' : o.v} className="flex items-center gap-2 py-1 px-1.5 rounded hover:bg-slate-500/10 cursor-pointer">
+                    <input type="checkbox" checked={cfDraft.has(o.v)} onChange={() => toggle(o.v)} />
+                    <span className="truncate">{o.v === '' ? '(kosong)' : o.v}</span>
+                  </label>
+                ))}
+              </div>
+              {shown.length > 300 && <div className="mt-1 text-[10px] text-slate-400">Menampilkan 300 dari {shown.length} nilai. Gunakan kotak cari untuk mempersempit.</div>}
+              <div className="flex items-center gap-2 mt-3">
+                <button onClick={cfSave} disabled={cfDraft.size === 0} className="flex-1 px-3 py-1.5 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white font-bold rounded-lg">Terapkan</button>
+                <button onClick={() => cfClearCol(tbl, col)} className="px-3 py-1.5 border border-slate-400/50 rounded-lg font-semibold">Reset</button>
+              </div>
+            </div>
+          </>
+        );
+      })()}
 
       {/* ===================== MODAL: STOK MASUK ===================== */}
       {showModalMasuk && (
