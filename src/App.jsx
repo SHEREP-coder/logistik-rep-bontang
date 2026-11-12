@@ -96,11 +96,11 @@ const enterNext = (e) => {
   }
 };
 
-// Availability (%) = Qty / (Kekurangan Supply + Qty) x 100  (kekurangan dibaca sebagai angka positif, mis. -2 atau 2 sama-sama dihitung 2)
+// Availability (%) = (Qty - Kekurangan Supply) / Qty x 100
 const availPct = (qty, kek) => {
-  const q = Number(qty); const k = Math.abs(Number(kek || 0));
+  const q = Number(qty); const k = Number(kek || 0);
   if (!Number.isFinite(q) || q <= 0 || !Number.isFinite(k)) return null;
-  return Math.max(0, Math.min(100, (q / (k + q)) * 100));
+  return Math.max(0, Math.min(100, ((q - k) / q) * 100));
 };
 const fmtPct = (v) => (v === null ? '-' : `${String(Math.round(v * 10) / 10).replace('.', ',')}%`);
 const withAvail = (r) => { const a = availPct(r.Qty, r['Kekurangan Supply']); return { ...r, 'Availability (%)': a === null ? '' : Math.round(a * 10) / 10 }; };
