@@ -11,7 +11,7 @@ import { initializeApp } from 'firebase/app';
 import {
   initializeFirestore, persistentLocalCache, persistentMultipleTabManager,
   collection, doc, getDoc, setDoc, addDoc, updateDoc, deleteDoc, onSnapshot,
-  writeBatch, runTransaction, serverTimestamp, query, where, getCountFromServer
+  writeBatch, runTransaction, serverTimestamp, query, where, getCountFromServer, getDocsFromServer, limit
 } from 'firebase/firestore';
 import {
   getAuth, onAuthStateChanged, signInWithEmailAndPassword, signOut,
@@ -333,6 +333,9 @@ export default function App() {
   const [pwForm, setPwForm] = useState({ lama: '', baru: '', ulang: '' });
   const [importMsg, setImportMsg] = useState('');
   const [importing, setImporting] = useState(false);
+  const [resetText, setResetText] = useState('');
+  const [resetting, setResetting] = useState(false);
+  const [resetMsg, setResetMsg] = useState('');
 
   const role = profile?.role;
   const isAdmin = role === 'Admin';
@@ -1530,6 +1533,39 @@ export default function App() {
     setImporting(false);
   };
 
+  // Reset: hapus SEMUA transaksi (barang masuk/keluar), arsip PO, dan riwayat opname. Master Barang & akun pengguna dipertahankan.
+  const resetTransaksi = async () => {
+    if (!isAdmin) return notify('Hanya Admin.', 'error');
+    if (resetText.trim() !== 'HAPUS') return notify('Ketik HAPUS (huruf besar) untuk konfirmasi.', 'error');
+    if (!window.confirm('YAKIN? Semua Barang Masuk, Barang Keluar, Arsip PO, dan Riwayat Opname akan DIHAPUS PERMANEN. Master Barang dan akun pengguna tetap aman. Pastikan sudah backup (menu Laporan).')) return;
+    setResetting(true); setResetMsg('Memulai...');
+    const names = ['barangMasuk', 'barangKeluar', 'riwayatPo', 'stokOpname'];
+    let total = 0;
+    try {
+      for (const name of names) {
+        let n = 0;
+        for (;;) {
+          const snap = await getDocsFromServer(query(collection(db, name), limit(400)));
+          if (snap.empty) break;
+          const batch = writeBatch(db);
+          snap.docs.forEach((d) => batch.delete(d.ref));
+          await batch.commit();
+          n += snap.size; total += snap.size;
+          setResetMsg(`Menghapus ${name}... ${n} dokumen (total ${total})`);
+        }
+      }
+      setResetMsg(`Selesai. ${total} dokumen dihapus. Master Barang tidak diubah. Silakan impor file Excel yang baru.`);
+      notify('Reset selesai.');
+      setResetText(''); setPhysicalStocks({});
+      checkPeriodeReady();
+    } catch (err) {
+      console.error(err);
+      const m = err.code === 'resource-exhausted' ? `Kuota harian Firebase habis setelah ${total} dokumen terhapus. Jalankan lagi setelah kuota reset (sekitar pukul 15.00 WIB); proses akan melanjutkan sisanya.` : err.code === 'permission-denied' ? `Ditolak oleh Firestore Rules setelah ${total} dokumen terhapus. Hapus sisa koleksi lewat Firebase Console.` : `Gagal setelah ${total} dokumen: ${err.code || err.message}`;
+      setResetMsg(m); notify(m, 'error');
+    }
+    setResetting(false);
+  };
+
   const unmigratedCount = useMemo(() => (periodeReady === false ? dataMasuk.filter((d) => !d.Periode).length + dataKeluar.filter((d) => !d.Periode).length : 0), [periodeReady, dataMasuk, dataKeluar]);
   const migratePeriode = async () => {
     if (!isAdmin) return notify('Hanya Admin.', 'error');
@@ -2363,6 +2399,19 @@ export default function App() {
                     <button disabled={importing} onClick={importFromPublic} className="px-3 py-2 rounded-lg text-xs font-semibold border border-slate-300 bg-white text-slate-700 disabled:opacity-50">Impor dari file bawaan (public)</button>
                   </div>
                   {importMsg && <p className="text-xs font-semibold text-blue-600 whitespace-pre-line break-words">{importMsg}</p>}
+                </div>
+              )}
+
+              {isAdmin && (
+                <div className="p-6 rounded-xl border-2 border-rose-400 shadow-sm space-y-3 bg-rose-50 text-slate-800">
+                  <h3 className="font-bold text-sm border-b border-rose-200 pb-2 flex items-center gap-2 text-rose-700"><Trash2 size={16} /> Reset Data (Hapus Transaksi, Arsip PO & Opname)</h3>
+                  <p className="text-xs">Menghapus <b>semua</b> data Barang Masuk, Barang Keluar, Arsip Database PO, dan Riwayat Stok Opname. <b>Master Barang dan akun pengguna tidak dihapus.</b> Stok di Master Barang tetap seperti sekarang. Tindakan ini tidak bisa dibatalkan, jadi unduh backup di menu Laporan lebih dulu.</p>
+                  <p className="text-xs">Setelah itu impor file Excel baru di bagian Impor Data di atas, lalu bila perlu jalankan <b>Hitung Ulang Stok</b>.</p>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <input value={resetText} onChange={(e) => setResetText(e.target.value)} placeholder="Ketik HAPUS untuk konfirmasi" className="px-3 py-2 text-xs border border-rose-300 rounded-lg bg-white text-slate-900 w-64" />
+                    <button disabled={resetting || resetText.trim() !== 'HAPUS'} onClick={resetTransaksi} className="px-3 py-2 rounded-lg text-xs font-semibold bg-rose-600 text-white disabled:opacity-40">{resetting ? 'Menghapus...' : 'Hapus Semua Transaksi'}</button>
+                  </div>
+                  {resetMsg && <p className="text-xs font-semibold text-rose-700 whitespace-pre-line break-words">{resetMsg}</p>}
                 </div>
               )}
 
