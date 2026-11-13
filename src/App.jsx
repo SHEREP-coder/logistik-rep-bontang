@@ -149,10 +149,10 @@ const fmtDate = (v) => {
 };
 
 const PO_ROWS = 12;
-const PO_COLS = ['uraian', 'partNumber', 'qty', 'unitPrice', 'keterangan'];
+const PO_COLS = ['no', 'uraian', 'partNumber', 'qty', 'unitPrice', 'keterangan'];
 const makePoRows = (arr = []) => Array.from({ length: PO_ROWS }, (_, i) => {
   const it = arr[i] || {};
-  return { id: Date.now() + Math.random() + i, uraian: it.uraian || '', partNumber: it.partNumber || '', qty: it.qty === undefined || it.qty === null ? '' : String(it.qty), unitPrice: it.unitPrice === undefined || it.unitPrice === null ? '' : String(it.unitPrice), keterangan: it.keterangan || '' };
+  return { id: Date.now() + Math.random() + i, no: it.no === undefined || it.no === null ? '' : String(it.no), uraian: it.uraian || '', partNumber: it.partNumber || '', qty: it.qty === undefined || it.qty === null ? '' : String(it.qty), unitPrice: it.unitPrice === undefined || it.unitPrice === null ? '' : String(it.unitPrice), keterangan: it.keterangan || '' };
 });
 const newPoHeader = () => ({ noPo: '', equipment: '', kodeAlat: '', lokasi: 'Bontang', tanggal: todayISO(), diketahuiOleh: '', ttd1Nama: '', ttd1Jabatan: '', ttd2Nama: '', ttd2Jabatan: '', ttd3Nama: '', ttd3Jabatan: '' });
 // Tanggal PO: 13-Nov-2026
@@ -962,7 +962,7 @@ export default function App() {
 
   /* ============================== AKSI: PO ============================== */
   const updatePoItem = (id, field, value) => setPoItems((items) => items.map((it) => (it.id === id ? { ...it, [field]: value } : it)));
-  const clearPoRow = (id) => setPoItems((items) => items.map((it) => (it.id === id ? { ...it, uraian: '', partNumber: '', qty: '', unitPrice: '', keterangan: '' } : it)));
+  const clearPoRow = (id) => setPoItems((items) => items.map((it) => (it.id === id ? { ...it, no: '', uraian: '', partNumber: '', qty: '', unitPrice: '', keterangan: '' } : it)));
 
   // ---- blok sel tabel PO (seret mouse, Shift+klik, Ctrl+C / Ctrl+X / Ctrl+V, Delete) ----
   const poRange = poSel ? { r1: Math.min(poSel.ar, poSel.fr), r2: Math.max(poSel.ar, poSel.fr), c1: Math.min(poSel.ac, poSel.fc), c2: Math.max(poSel.ac, poSel.fc) } : null;
@@ -1003,6 +1003,21 @@ export default function App() {
     }));
     setPoSel({ ar: r1, ac: c1, fr: Math.min(PO_ROWS - 1, r1 + grid.length - 1), fc: Math.min(PO_COLS.length - 1, c1 + Math.max(...grid.map((g) => g.length)) - 1) });
   };
+  // panah keyboard: pindah antar sel tabel PO (kiri/kanan hanya bila kursor di ujung teks)
+  const poNav = (e, r, c) => {
+    if (e.shiftKey || e.ctrlKey || e.altKey || e.metaKey) return;
+    const el = e.currentTarget; let nr = r; let nc = c;
+    if (e.key === 'ArrowUp') nr = r - 1;
+    else if (e.key === 'ArrowDown') nr = r + 1;
+    else if (e.key === 'ArrowLeft') { if (el.selectionStart !== 0 || el.selectionEnd !== 0) return; nc = c - 1; }
+    else if (e.key === 'ArrowRight') { if (el.selectionStart !== el.value.length || el.selectionEnd !== el.value.length) return; nc = c + 1; }
+    else return;
+    if (nr < 0 || nr >= PO_ROWS || nc < 0 || nc >= PO_COLS.length) return;
+    const t = poSheetRef.current && poSheetRef.current.querySelector(`[data-pocell="${nr}-${nc}"]`);
+    if (!t) return;
+    e.preventDefault(); t.focus();
+    try { const L = t.value.length; t.setSelectionRange(L, L); } catch (err) { /* abaikan */ }
+  };
   const poKeyDown = (e) => {
     if (!poMulti) return;
     if (e.key === 'Delete' || e.key === 'Backspace') { e.preventDefault(); poFill(''); }
@@ -1014,9 +1029,9 @@ export default function App() {
     const hasContent = poItems.some((i) => i.uraian || i.partNumber);
     if (hasContent && !window.confirm('Isi tabel PO akan diganti dengan daftar barang wajib order. Lanjutkan?')) return;
     if (poNeededItems.length > PO_ROWS) notify(`Ada ${poNeededItems.length} barang wajib order; hanya ${PO_ROWS} baris pertama yang dimuat (1 lembar PO = ${PO_ROWS} baris).`, 'error');
-    setPoItems(makePoRows(poNeededItems.slice(0, PO_ROWS).map((m) => {
+    setPoItems(makePoRows(poNeededItems.slice(0, PO_ROWS).map((m, idx) => {
       const cur = Number(m.Qty || 0); const min = Number(m.MinQty ?? 5);
-      return { uraian: m['Nama Barang'] || '', partNumber: String(m['Nomor Barang'] || m.Kode || ''), qty: String(Math.max(1, min * 2 - cur)), unitPrice: '', keterangan: `Stok ${cur} / Min ${min}` };
+      return { no: String(idx + 1), uraian: m['Nama Barang'] || '', partNumber: String(m['Nomor Barang'] || m.Kode || ''), qty: String(Math.max(1, min * 2 - cur)), unitPrice: '', keterangan: `Stok ${cur} / Min ${min}` };
     })));
   };
 
@@ -1027,13 +1042,16 @@ export default function App() {
     setPoSel(null);
   };
 
-  const savePo = async () => {
-    if (!canEdit) return notify('Akses ditolak!', 'error');
+  // keep=true: setelah tersimpan form dibiarkan terisi (dipakai untuk Simpan & Cetak). Mengembalikan true bila berhasil.
+  const savePo = async (keep = false) => {
+    const fail = (m) => { notify(m, 'error'); return false; };
+    if (!canEdit) return fail('Akses ditolak!');
     const items = poItems.filter((i) => i.uraian.trim() || i.partNumber.trim());
-    if (items.length === 0) return notify('Isi minimal satu baris barang.', 'error');
-    if (!poHeader.noPo.trim()) return notify('Nomor PO wajib diisi.', 'error');
-    if (riwayatPo.some((p) => p.noPo === poHeader.noPo.trim() && p.id !== editingPoId)) return notify('Nomor PO sudah dipakai di arsip.', 'error');
+    if (items.length === 0) return fail('Isi minimal satu baris barang.');
+    if (!poHeader.noPo.trim()) return fail('Nomor PO wajib diisi.');
+    if (riwayatPo.some((p) => p.noPo === poHeader.noPo.trim() && p.id !== editingPoId)) return fail('Nomor PO sudah dipakai di arsip.');
     setSaving(true);
+    let ok = false;
     try {
       const payload = {
         ...poHeader, noPo: poHeader.noPo.trim(), dibuatOleh: profile.nama,
@@ -1043,16 +1061,22 @@ export default function App() {
         await updateDoc(doc(db, 'riwayatPo', editingPoId), { ...payload, updatedAt: serverTimestamp() });
         notify('PO di arsip diperbarui.');
       } else {
-        await addDoc(collection(db, 'riwayatPo'), { ...payload, createdAt: serverTimestamp(), createdBy: profile.username });
+        const ref = await addDoc(collection(db, 'riwayatPo'), { ...payload, createdAt: serverTimestamp(), createdBy: profile.username });
         notify('PO disimpan ke arsip.');
-        setEditingPoId(null);
-        setPoHeader(newPoHeader());
-        setPoItems(makePoRows());
-        setPoSel(null);
+        if (keep === true) { setEditingPoId(ref.id); }
+        else { setEditingPoId(null); setPoHeader(newPoHeader()); setPoItems(makePoRows()); setPoSel(null); }
       }
+      ok = true;
     } catch (err) { console.error(err); notify('Gagal menyimpan PO: ' + (err.code || err.message), 'error'); }
     setSaving(false);
+    return ok;
   };
+  const savePoAndPrint = async () => {
+    const ok = await savePo(true);
+    if (ok) setTimeout(() => window.print(), 250);
+  };
+  const [poOff, setPoOff] = useState(() => { try { const v = JSON.parse(localStorage.getItem('poPrintOffset') || 'null'); if (v && Number.isFinite(v.x) && Number.isFinite(v.y)) return v; } catch (e) { /* abaikan */ } return { x: 0, y: 13 }; });
+  const updatePoOff = (k, val) => { const n = { ...poOff, [k]: val }; setPoOff(n); try { localStorage.setItem('poPrintOffset', JSON.stringify(n)); } catch (e) { /* abaikan */ } };
 
   const openPoFromArchive = (po) => {
     setEditingPoId(po.id);
@@ -1510,7 +1534,7 @@ export default function App() {
           html, body, #root, .app-root, .app-main, .app-content { overflow: visible !important; height: auto !important; display: block !important; background: #fff !important; }
           body * { visibility: hidden !important; }
           #po-sheet, #po-sheet * { visibility: visible !important; }
-          #po-sheet { position: absolute !important; left: 0; top: 0; width: 210mm !important; height: 148.5mm !important; max-width: none !important; margin: 0 !important; border: none !important; box-shadow: none !important; padding: 6mm 10mm !important; box-sizing: border-box !important; overflow: hidden !important; background: #fff !important; }
+          #po-sheet { position: absolute !important; left: var(--po-x, 0mm) !important; top: var(--po-y, 0mm) !important; width: 210mm !important; height: 148.5mm !important; max-width: none !important; margin: 0 !important; border: none !important; box-shadow: none !important; padding: 6mm 10mm !important; box-sizing: border-box !important; overflow: hidden !important; background: #fff !important; }
           .no-print { display: none !important; }
           .po-input:focus { background: transparent; }
           /* Formulir asli sudah tercetak: semua teks/garis format dibuat putih, hanya isian yang hitam */
@@ -1848,17 +1872,24 @@ export default function App() {
                   <h3 className="font-bold text-sm text-slate-900 flex items-center gap-2"><ShoppingCart size={18} className="text-yellow-600" /> Form Purchase Order {editingPoId && <span className="text-[10px] bg-blue-600 text-white px-2 py-0.5 rounded-full">Mengedit arsip</span>}</h3>
                   <p className="text-xs text-slate-600">Isi langsung pada lembar di bawah, simpan ke arsip, lalu cetak. Tabel tetap 12 baris (setengah A4 portrait, 210 × 148,5 mm). Seret mouse pada tabel untuk memblok sel (Ctrl+C / Ctrl+V / Delete bisa dipakai). Saat dicetak, tulisan &amp; garis formulir otomatis memutih; hanya isian yang tercetak hitam.</p>
                 </div>
+                <div className="w-full flex flex-wrap items-center gap-3 text-xs text-slate-700 border-t border-yellow-300 pt-2">
+                  <span className="font-semibold">Geser posisi cetak (mm):</span>
+                  <label className="flex items-center gap-1">Atas/bawah <input type="number" step="0.5" value={poOff.y} onChange={(e) => updatePoOff('y', e.target.value === '' ? 0 : Number(e.target.value))} className="w-16 px-2 py-1 rounded border border-slate-300 bg-white text-slate-900" /></label>
+                  <label className="flex items-center gap-1">Kiri/kanan <input type="number" step="0.5" value={poOff.x} onChange={(e) => updatePoOff('x', e.target.value === '' ? 0 : Number(e.target.value))} className="w-16 px-2 py-1 rounded border border-slate-300 bg-white text-slate-900" /></label>
+                  <span className="text-slate-500">Angka positif = geser ke bawah / ke kanan, negatif = ke atas / ke kiri. Satu baris tabel = 5,2 mm. Tersimpan di browser ini.</span>
+                </div>
                 <div className="flex flex-wrap gap-2">
                   <button onClick={fillPoFromNeeded} className="bg-amber-500 hover:bg-amber-600 text-slate-950 px-3 py-2 rounded-lg text-xs font-bold flex items-center gap-1.5"><AlertTriangle size={14} /> Isi dari Barang Wajib Order ({poNeededItems.length})</button>
-                  {canEdit && <button onClick={savePo} disabled={saving} className="bg-emerald-600 hover:bg-emerald-700 disabled:opacity-60 text-white px-3 py-2 rounded-lg text-xs font-semibold flex items-center gap-1.5"><Save size={14} /> {editingPoId ? 'Perbarui Arsip' : 'Simpan ke Arsip'}</button>}
-                  <button onClick={() => window.print()} className="bg-blue-600 hover:bg-blue-700 text-white px-3 py-2 rounded-lg text-xs font-semibold flex items-center gap-1.5"><Printer size={14} /> Cetak</button>
+                  {canEdit && <button onClick={() => savePo(false)} disabled={saving} className="bg-emerald-600 hover:bg-emerald-700 disabled:opacity-60 text-white px-3 py-2 rounded-lg text-xs font-semibold flex items-center gap-1.5"><Save size={14} /> {editingPoId ? 'Perbarui Arsip' : 'Simpan ke Arsip'}</button>}
+                  {canEdit && <button onClick={savePoAndPrint} disabled={saving} className="bg-blue-600 hover:bg-blue-700 disabled:opacity-60 text-white px-3 py-2 rounded-lg text-xs font-semibold flex items-center gap-1.5"><Printer size={14} /> Simpan &amp; Cetak</button>}
+                  <button onClick={() => window.print()} className="bg-white border border-blue-500 text-blue-700 hover:bg-blue-50 px-3 py-2 rounded-lg text-xs font-semibold flex items-center gap-1.5"><Printer size={14} /> Cetak Saja</button>
                   <button onClick={resetPoForm} className="bg-white border border-slate-300 text-slate-700 px-3 py-2 rounded-lg text-xs font-semibold flex items-center gap-1.5"><FilePlus2 size={14} /> Form Baru</button>
                 </div>
               </div>
 
               <div id="po-sheet" ref={poSheetRef} tabIndex={-1} onKeyDown={poKeyDown} onCopy={poCopy} onCut={poCut} onPaste={poPaste}
                 onMouseDown={(e) => { if (!e.target.closest('[data-cell]')) setPoSel(null); }}
-                className="bg-white border border-slate-300 shadow-md mx-auto" style={{ width: '210mm', height: '148.5mm', padding: '6mm 10mm', boxSizing: 'border-box', color: INK, fontFamily: 'Arial, Helvetica, sans-serif', outline: 'none', overflow: 'hidden' }}>
+                className="bg-white border border-slate-300 shadow-md mx-auto" style={{ width: '210mm', height: '148.5mm', padding: '6mm 10mm', boxSizing: 'border-box', color: INK, fontFamily: 'Arial, Helvetica, sans-serif', outline: 'none', overflow: 'hidden', '--po-x': `${Number(poOff.x) || 0}mm`, '--po-y': `${Number(poOff.y) || 0}mm` }}>
                 <div className="flex items-center gap-4" style={{ height: '13mm' }}>
                   <img src="/logo_PT_REP_transparan.png" alt="" className="po-static object-contain" style={{ width: '12mm', height: '12mm' }} />
                   <div className="flex-1">
@@ -1905,13 +1936,12 @@ export default function App() {
                   <tbody>
                     {poItems.map((it, r) => (
                       <tr key={it.id} style={{ height: '5.2mm' }}>
-                        <td className="po-static po-line text-center font-semibold" style={{ padding: 0, borderRight: `0.4mm solid ${INK}` }}>{r + 1}</td>
                         {PO_COLS.map((f, c) => (
                           <td key={f} data-cell className={`po-line ${poInSel(r, c) ? 'po-sel' : ''}`} onMouseDown={(e) => poCellDown(e, r, c)} onMouseEnter={() => poCellEnter(r, c)}
-                            style={{ padding: 0, position: 'relative', borderRight: c < 4 ? `0.4mm solid ${INK}` : 'none' }}>
-                            <input className={`po-input ${f === 'qty' || f === 'unitPrice' ? 'text-center' : ''}`} style={{ display: 'block', height: '5.2mm', padding: '0 1.2mm', fontSize: '8.5pt', lineHeight: 1.1 }}
-                              value={it[f]} onChange={(e) => updatePoItem(it.id, f, e.target.value)} onFocus={() => { if (!poDrag.current) setPoSel({ ar: r, ac: c, fr: r, fc: c }); }} />
-                            {c === 4 && <button onClick={() => clearPoRow(it.id)} title="Kosongkan baris ini" className="no-print absolute p-1 rounded-md text-rose-600 bg-rose-50 hover:bg-rose-600 hover:text-white" style={{ right: '-34px', top: '0.2mm' }}><Trash2 size={13} /></button>}
+                            style={{ padding: 0, position: 'relative', borderRight: c < PO_COLS.length - 1 ? `0.4mm solid ${INK}` : 'none' }}>
+                            <input data-pocell={`${r}-${c}`} className={`po-input ${f === 'no' || f === 'qty' || f === 'unitPrice' ? 'text-center' : ''}`} style={{ display: 'block', height: '5.2mm', padding: '0 1.2mm', fontSize: '8.5pt', lineHeight: 1.1 }}
+                              value={it[f]} onChange={(e) => updatePoItem(it.id, f, e.target.value)} onKeyDown={(e) => poNav(e, r, c)} onFocus={() => { if (!poDrag.current) setPoSel({ ar: r, ac: c, fr: r, fc: c }); }} />
+                            {c === PO_COLS.length - 1 && <button onClick={() => clearPoRow(it.id)} title="Kosongkan baris ini" className="no-print absolute p-1 rounded-md text-rose-600 bg-rose-50 hover:bg-rose-600 hover:text-white" style={{ right: '-34px', top: '0.2mm' }}><Trash2 size={13} /></button>}
                           </td>
                         ))}
                       </tr>
