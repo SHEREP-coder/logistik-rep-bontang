@@ -168,6 +168,8 @@ const poNumberValue = (s) => { const m = String(s || '').match(/(\d+)\s*$/); ret
 const periodeOf = (v) => { const iso = toISODate(v); return iso ? iso.slice(0, 7) : 'Tanpa-Tanggal'; };
 const formatPoNumber = (n) => `A ${String(n).padStart(6, '0')}`;
 
+// Ambil angka di awal teks qty PO, mis. "5 Psg" -> 5, "21 Lbr" -> 21, "2,5 Ltr" -> 2.5
+const qtyNum = (v) => { const m = String(v ?? '').trim().replace(',', '.').match(/^\d+(\.\d+)?/); return m ? Number(m[0]) : 0; };
 const chunk = (arr, size) => { const out = []; for (let i = 0; i < arr.length; i += size) out.push(arr.slice(i, i + size)); return out; };
 
 const stripMeta = (row) => {
@@ -1139,8 +1141,8 @@ export default function App() {
   /* ---------- PENERIMAAN BARANG DARI PO (Arsip Database PO -> Stok Masuk otomatis) ---------- */
   const matchMat = (it) => { const pn = String(it.partNumber || '').trim().toLowerCase(); return pn ? (materialByKode.get(pn) || materialByNomor.get(pn) || null) : null; };
   const poRecv = (po) => {
-    const items = (po.items || []).filter((i) => Number(i.qty) > 0);
-    const done = items.filter((i) => Number(i.diterima || 0) >= Number(i.qty)).length;
+    const items = (po.items || []).filter((i) => qtyNum(i.qty) > 0);
+    const done = items.filter((i) => Number(i.diterima || 0) >= qtyNum(i.qty)).length;
     const any = items.some((i) => Number(i.diterima || 0) > 0);
     const status = po.ditutup ? 'Ditutup' : items.length > 0 && done === items.length ? 'Lengkap' : any ? 'Sebagian' : 'Belum';
     return { status, done, n: items.length };
@@ -1151,7 +1153,7 @@ export default function App() {
   };
   const closeTerima = () => { setTerimaPo(null); setTerimaForm(null); };
   const setTerimaRow = (i, patch) => setTerimaForm((f) => ({ ...f, rows: f.rows.map((r, k) => (k === i ? { ...r, ...patch } : r)) }));
-  const terimaSemuaSisa = () => setTerimaForm((f) => ({ ...f, rows: f.rows.map((r, i) => { const it = terimaPo.items[i]; const sisa = Math.max(0, (Number(it.qty) || 0) - (Number(it.diterima) || 0)); return { ...r, qtyNow: sisa > 0 ? String(sisa) : '' }; }) }));
+  const terimaSemuaSisa = () => setTerimaForm((f) => ({ ...f, rows: f.rows.map((r, i) => { const it = terimaPo.items[i]; const sisa = Math.max(0, (qtyNum(it.qty) || 0) - (Number(it.diterima) || 0)); return { ...r, qtyNow: sisa > 0 ? String(sisa) : '' }; }) }));
 
   const saveTerima = async (e) => {
     if (e) e.preventDefault();
@@ -1169,7 +1171,7 @@ export default function App() {
       lines.push({ i, it, mat, qty, ket: r.ket });
     }
     if (lines.length === 0 && !!f.tutup === !!po.ditutup) return notify('Isi qty "Diterima Sekarang" minimal satu baris.', 'error');
-    const lebih = lines.filter((l) => (Number(l.it.qty) || 0) > 0 && (Number(l.it.diterima) || 0) + l.qty > Number(l.it.qty));
+    const lebih = lines.filter((l) => (qtyNum(l.it.qty) || 0) > 0 && (Number(l.it.diterima) || 0) + l.qty > qtyNum(l.it.qty));
     if (lebih.length && !window.confirm(`${lebih.length} baris melebihi jumlah yang dipesan. Tetap simpan?`)) return;
     setSaving(true);
     try {
@@ -1189,7 +1191,7 @@ export default function App() {
         const add = {};
         lines.forEach((l, k) => {
           const it = items[l.i];
-          const ord = Number(it.qty) || 0;
+          const ord = qtyNum(it.qty) || 0;
           const got = (Number(it.diterima) || 0) + l.qty;
           it.diterima = got;
           add[l.mat.id] = (add[l.mat.id] || 0) + l.qty;
@@ -2132,7 +2134,7 @@ export default function App() {
                           <td className="p-3.5 text-center font-bold">{(po.items || []).length}</td><td className="p-3.5">{po.dibuatOleh}</td>
                           <td className="p-3.5 text-center align-middle">{(() => { const rc = poRecv(po); const cls = rc.status === 'Lengkap' ? 'bg-emerald-100 text-emerald-800' : rc.status === 'Sebagian' ? 'bg-amber-100 text-amber-800' : rc.status === 'Ditutup' ? 'bg-blue-100 text-blue-800' : 'bg-slate-200 text-slate-700'; return <span className={`px-2.5 py-1 rounded-full font-bold text-[10px] whitespace-nowrap ${cls}`}>{rc.status}{rc.n > 0 && rc.status !== 'Belum' ? ` ${rc.done}/${rc.n}` : ''}</span>; })()}</td>
                           <td className="p-3.5 text-center whitespace-nowrap">
-                            {canEdit && <button onClick={() => openTerima(po)} className="px-2.5 py-1 bg-emerald-600 text-white rounded-lg font-semibold mr-1 inline-flex items-center gap-1"><ArrowDownToLine size={12} /> Terima Barang</button>}
+                            {canEdit && poRecv(po).status !== 'Lengkap' && <button onClick={() => openTerima(po)} className="px-2.5 py-1 bg-emerald-600 text-white rounded-lg font-semibold mr-1 inline-flex items-center gap-1"><ArrowDownToLine size={12} /> Terima Barang</button>}
                             <button onClick={() => openPoFromArchive(po)} className="px-2.5 py-1 bg-blue-600 text-white rounded-lg font-semibold mr-1 inline-flex items-center gap-1"><Printer size={12} /> Buka / Cetak</button>
                             {isAdmin && <button onClick={() => deletePo(po)} className="p-1.5 text-rose-500 hover:bg-rose-50 rounded"><Trash2 size={14} /></button>}
                           </td>
@@ -2555,7 +2557,7 @@ export default function App() {
                 <thead className={`border-b font-semibold ${thead}`}><tr><th className="p-2">NO</th><th className="p-2">URAIAN / PART NUMBER</th><th className="p-2">KODE (Master Barang)</th><th className="p-2">DIPESAN</th><th className="p-2">SUDAH DITERIMA</th><th className="p-2">SISA</th><th className="p-2">DITERIMA SEKARANG</th><th className="p-2">KETERANGAN</th></tr></thead>
                 <tbody className={`divide-y ${divide}`}>
                   {(terimaPo.items || []).map((it, i) => {
-                    const ord = Number(it.qty) || 0; const got = Number(it.diterima) || 0; const sisa = Math.max(0, ord - got);
+                    const ord = qtyNum(it.qty) || 0; const got = Number(it.diterima) || 0; const sisa = Math.max(0, ord - got);
                     const r = terimaForm.rows[i];
                     const mat = r.kode.trim() ? materialByKode.get(r.kode.trim().toLowerCase()) : null;
                     return (
@@ -2563,7 +2565,7 @@ export default function App() {
                         <td className="p-2 text-center">{it.no || i + 1}</td>
                         <td className="p-2 max-w-[16rem] break-words"><div className="font-semibold">{it.uraian || '-'}</div><div className="text-slate-400">{it.partNumber || ''}</div></td>
                         <td className="p-2 w-40"><input type="text" className={`${inputClass} !p-1.5 ${r.kode && !mat ? '!border-rose-500' : ''}`} value={r.kode} onChange={(e) => setTerimaRow(i, { kode: e.target.value })} placeholder="Kode barang" />{mat ? <div className="text-[10px] text-emerald-600 font-semibold mt-0.5">Stok: {mat.Qty}</div> : r.kode ? <div className="text-[10px] text-rose-500 font-semibold mt-0.5">Tidak ada di master</div> : null}</td>
-                        <td className="p-2 text-center font-bold">{ord || '-'}</td>
+                        <td className="p-2 text-center font-bold whitespace-nowrap">{ord > 0 ? String(it.qty).trim() : '-'}</td>
                         <td className="p-2 text-center font-bold text-emerald-600">{got}</td>
                         <td className={`p-2 text-center font-bold ${sisa > 0 ? 'text-rose-600' : 'text-emerald-600'}`}>{ord > 0 ? sisa : '-'}</td>
                         <td className="p-2 w-28"><input type="number" min="0" className={`${inputClass} !p-1.5 text-center`} value={r.qtyNow} onChange={(e) => setTerimaRow(i, { qtyNow: e.target.value })} placeholder="0" /></td>
