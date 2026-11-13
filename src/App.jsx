@@ -49,8 +49,8 @@ const INK = '#1e3a5f';
 // Pengaturan geser SAAT CETAK (satuan 'ch' = lebar 1 angka; negatif = ke kiri, positif = ke kanan). Ubah di sini bila perlu disetel ulang.
 const PO_SHIFT = { no: -2, uraian: -1, qty: -4, keterangan: 2 };
 // Isian Equipment/Kode Alat/Lokasi/Tanggal saat cetak: naik 2 baris (1 baris = 4,2 mm); jarak baris 1 -> baris berikutnya 1,5
-const PO_HDR_UP = 2; const PO_LINE_MM = 4.2; const PO_HDR_GAPS = [0, 0, 1, 2]; // tambahan baris per isian (jarak 1, lalu spasi 2, 2)
-const PO_HDR_LEFT = -5; // isian header digeser 5 angka ke kiri saat cetak
+const PO_HDR_UP = 2; const PO_LINE_MM = 4.2; const PO_HDR_GAPS = [0, 0.75, 1, 1.25]; // koreksi baris per isian (Equipment, Kode Alat, Lokasi, Tanggal); positif = turun, negatif = naik
+const PO_HDR_LEFT = -3; // isian header digeser 5 angka ke kiri saat cetak
 const PO_HDR_MM = PO_HDR_GAPS.map((g) => ((g - PO_HDR_UP) * PO_LINE_MM).toFixed(2));
 
 const THEMES = {
