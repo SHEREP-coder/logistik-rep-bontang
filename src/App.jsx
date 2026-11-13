@@ -1581,6 +1581,7 @@ export default function App() {
           #po-sheet .po-sel { background: transparent !important; }
           #po-sheet input, #po-sheet .po-val { color: #000 !important; background: transparent !important; }
           #po-sheet input.po-nopo { color: #fff !important; }
+          #po-sheet input.po-ttd-name { text-decoration: underline; text-decoration-thickness: 0.2mm; text-underline-offset: 0.6mm; }
           #po-sheet td.po-col-0 input { transform: translateX(${PO_SHIFT.no}ch); }
           #po-sheet td.po-col-1 input { transform: translateX(${PO_SHIFT.uraian}ch); }
           #po-sheet td.po-col-3 input { transform: translateX(${PO_SHIFT.qty}ch); }
@@ -2001,7 +2002,7 @@ export default function App() {
                     <div key={k} className="absolute top-0" style={{ left: lf, width: w, textAlign: al }}>
                       <div className="po-static" style={{ height: '4mm', lineHeight: '4mm' }}>{label}</div>
                       <div style={{ height: '13mm' }} />
-                      <input data-sig={`0-${ci}`} onKeyDown={(e) => sigNav(e, 0, ci)} className="po-input po-line border-b border-dotted font-bold" placeholder="Nama" style={{ height: '4.5mm', fontSize: '8.5pt', textAlign: al }} value={poHeader[k + 'Nama']} onChange={(e) => setPoHeader({ ...poHeader, [k + 'Nama']: e.target.value })} />
+                      <input data-sig={`0-${ci}`} onKeyDown={(e) => sigNav(e, 0, ci)} className="po-input po-ttd-name po-line border-b border-dotted font-bold" placeholder="Nama" style={{ height: '4.5mm', fontSize: '8.5pt', textAlign: al }} value={poHeader[k + 'Nama']} onChange={(e) => setPoHeader({ ...poHeader, [k + 'Nama']: e.target.value })} />
                       <input data-sig={`1-${ci}`} onKeyDown={(e) => sigNav(e, 1, ci)} className="po-input" placeholder="Jabatan" style={{ height: '4mm', fontSize: '8pt', fontWeight: 600, textAlign: al }} value={poHeader[k + 'Jabatan']} onChange={(e) => setPoHeader({ ...poHeader, [k + 'Jabatan']: e.target.value })} />
                     </div>
                   ))}
