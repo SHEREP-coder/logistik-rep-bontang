@@ -49,7 +49,8 @@ const INK = '#1e3a5f';
 // Pengaturan geser SAAT CETAK (satuan 'ch' = lebar 1 angka; negatif = ke kiri, positif = ke kanan). Ubah di sini bila perlu disetel ulang.
 const PO_SHIFT = { no: -2, uraian: -1, qty: -4, keterangan: 2 };
 // Isian Equipment/Kode Alat/Lokasi/Tanggal saat cetak: naik 2 baris (1 baris = 4,2 mm); jarak baris 1 -> baris berikutnya 1,5
-const PO_HDR_UP = 2; const PO_LINE_MM = 4.2; const PO_HDR_GAPS = [0, 0, 0.5, 1.0]; // tambahan baris per isian (jarak 1, lalu 1,5, 1,5)
+const PO_HDR_UP = 2; const PO_LINE_MM = 4.2; const PO_HDR_GAPS = [0, 0, 1, 2]; // tambahan baris per isian (jarak 1, lalu spasi 2, 2)
+const PO_HDR_LEFT = -5; // isian header digeser 5 angka ke kiri saat cetak
 const PO_HDR_MM = PO_HDR_GAPS.map((g) => ((g - PO_HDR_UP) * PO_LINE_MM).toFixed(2));
 
 const THEMES = {
@@ -1102,9 +1103,14 @@ export default function App() {
     setSaving(false);
     return ok;
   };
-  const savePoAndPrint = async () => {
-    const ok = await savePo(true);
-    if (ok) setTimeout(() => window.print(), 250);
+  // Cetak dipanggil langsung saat klik (tanpa menunggu server) supaya dialog cetak pasti muncul; penyimpanan berjalan bersamaan
+  const savePoAndPrint = () => {
+    if (!canEdit) return notify('Akses ditolak!', 'error');
+    if (!poItems.some((i) => i.uraian.trim() || i.partNumber.trim())) return notify('Isi minimal satu baris barang.', 'error');
+    if (!poHeader.noPo.trim()) return notify('Nomor PO wajib diisi.', 'error');
+    if (riwayatPo.some((p) => p.noPo === poHeader.noPo.trim() && p.id !== editingPoId)) return notify('Nomor PO sudah dipakai di arsip.', 'error');
+    savePo(true);
+    window.print();
   };
   const [poOff, setPoOff] = useState(() => { try { const v = JSON.parse(localStorage.getItem('poPrintOffset') || 'null'); if (v && Number.isFinite(v.x) && Number.isFinite(v.y)) return v; } catch (e) { /* abaikan */ } return { x: 0, y: 13 }; });
   const updatePoOff = (k, val) => { const n = { ...poOff, [k]: val }; setPoOff(n); try { localStorage.setItem('poPrintOffset', JSON.stringify(n)); } catch (e) { /* abaikan */ } };
@@ -1579,10 +1585,10 @@ export default function App() {
           #po-sheet td.po-col-1 input { transform: translateX(${PO_SHIFT.uraian}ch); }
           #po-sheet td.po-col-3 input { transform: translateX(${PO_SHIFT.qty}ch); }
           #po-sheet td.po-col-5 input { transform: translateX(${PO_SHIFT.keterangan}ch); }
-          #po-sheet .po-hv-0 { transform: translateY(${PO_HDR_MM[0]}mm); }
-          #po-sheet .po-hv-1 { transform: translateY(${PO_HDR_MM[1]}mm); }
-          #po-sheet .po-hv-2 { transform: translateY(${PO_HDR_MM[2]}mm); }
-          #po-sheet .po-hv-3 { transform: translateY(${PO_HDR_MM[3]}mm); }
+          #po-sheet .po-hv-0 { transform: translate(${PO_HDR_LEFT}ch, ${PO_HDR_MM[0]}mm); }
+          #po-sheet .po-hv-1 { transform: translate(${PO_HDR_LEFT}ch, ${PO_HDR_MM[1]}mm); }
+          #po-sheet .po-hv-2 { transform: translate(${PO_HDR_LEFT}ch, ${PO_HDR_MM[2]}mm); }
+          #po-sheet .po-hv-3 { transform: translate(${PO_HDR_LEFT}ch, ${PO_HDR_MM[3]}mm); }
           #po-sheet input::placeholder { color: transparent !important; }
           * { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
         }
@@ -1957,7 +1963,7 @@ export default function App() {
                   ))}
                   <div className="flex items-center gap-2" style={{ height: '4.2mm' }}>
                     <span className="po-static w-24 shrink-0 whitespace-nowrap">TANGGAL</span><span className="po-static">:</span>
-                    <div className="relative inline-block po-hv-3" style={{ minWidth: '32mm' }}>
+                    <div className="relative inline-block po-hv-3" style={{ minWidth: '32mm', fontSize: '8.5pt' }}>
                       <span className="po-val po-line inline-block border-b border-dotted w-full" style={{ fontSize: '8.5pt', lineHeight: '4.2mm', minHeight: '4.2mm' }}>{poDateText(poHeader.tanggal) || '\u00A0'}</span>
                       <input type="date" title="Pilih tanggal" className="no-print absolute inset-0 w-full h-full opacity-0 cursor-pointer" value={poHeader.tanggal} onChange={(e) => setPoHeader({ ...poHeader, tanggal: e.target.value })} onClick={(e) => { try { e.currentTarget.showPicker && e.currentTarget.showPicker(); } catch (err) { /* abaikan */ } }} />
                     </div>
