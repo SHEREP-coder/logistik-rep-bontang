@@ -158,7 +158,7 @@ const PO_ROWS = 12;
 const PO_COLS = ['no', 'uraian', 'partNumber', 'qty', 'unitPrice', 'keterangan'];
 const makePoRows = (arr = []) => Array.from({ length: PO_ROWS }, (_, i) => {
   const it = arr[i] || {};
-  return { id: Date.now() + Math.random() + i, no: it.no === undefined || it.no === null ? '' : String(it.no), uraian: it.uraian || '', partNumber: it.partNumber || '', qty: it.qty === undefined || it.qty === null ? '' : String(it.qty), unitPrice: it.unitPrice === undefined || it.unitPrice === null ? '' : String(it.unitPrice), keterangan: it.keterangan || '' };
+  return { id: Date.now() + Math.random() + i, no: it.no === undefined || it.no === null ? '' : String(it.no), uraian: it.uraian || '', partNumber: it.partNumber || '', qty: it.qty === undefined || it.qty === null ? '' : String(it.qty), unitPrice: it.unitPrice === undefined || it.unitPrice === null ? '' : String(it.unitPrice), keterangan: it.keterangan || '', ...(it.diterima ? { diterima: Number(it.diterima) } : {}) };
 });
 const newPoHeader = () => ({ noPo: '', equipment: '', kodeAlat: '', lokasi: 'Bontang', tanggal: todayISO(), diketahuiOleh: '', ttd1Nama: '', ttd1Jabatan: '', ttd2Nama: '', ttd2Jabatan: '', ttd3Nama: '', ttd3Jabatan: '' });
 // Tanggal PO: 13-Nov-2026
@@ -190,10 +190,10 @@ function Pager({ page, setPage, total, dark }) {
   );
 }
 
-function Modal({ title, icon, onClose, dark, children, wide }) {
+function Modal({ title, icon, onClose, dark, children, wide, xwide }) {
   return (
     <div className="fixed inset-0 bg-black bg-opacity-60 flex items-center justify-center z-50 p-4 no-print">
-      <div className={`w-full ${wide ? 'max-w-xl' : 'max-w-lg'} max-h-[92vh] overflow-y-auto p-6 rounded-xl shadow-2xl border ${dark ? 'bg-slate-800 border-slate-700 text-white' : 'bg-white border-slate-200 text-slate-800'}`}>
+      <div className={`w-full ${xwide ? 'max-w-5xl' : wide ? 'max-w-xl' : 'max-w-lg'} max-h-[92vh] overflow-y-auto p-6 rounded-xl shadow-2xl border ${dark ? 'bg-slate-800 border-slate-700 text-white' : 'bg-white border-slate-200 text-slate-800'}`}>
         <div className="flex justify-between items-center mb-4 border-b pb-2">
           <h3 className="font-bold text-base flex items-center gap-1.5">{icon}{title}</h3>
           <button onClick={onClose}><X size={20} /></button>
@@ -324,6 +324,8 @@ export default function App() {
   const poDrag = useRef(false);
   useEffect(() => { const up = () => { poDrag.current = false; }; window.addEventListener('mouseup', up); return () => window.removeEventListener('mouseup', up); }, []);
   const [editingPoId, setEditingPoId] = useState(null);
+  const [terimaPo, setTerimaPo] = useState(null);     // PO yang sedang diisi penerimaan barangnya
+  const [terimaForm, setTerimaForm] = useState(null);
 
   /* ---------- pengaturan ---------- */
   const [pwForm, setPwForm] = useState({ lama: '', baru: '', ulang: '' });
@@ -464,6 +466,12 @@ export default function App() {
   const materialByKode = useMemo(() => {
     const m = new Map();
     dataMaterial.forEach((x) => { if (x.Kode) m.set(String(x.Kode).toLowerCase(), x); });
+    return m;
+  }, [dataMaterial]);
+
+  const materialByNomor = useMemo(() => {
+    const m = new Map();
+    dataMaterial.forEach((x) => { const n = String(x['Nomor Barang'] ?? '').trim().toLowerCase(); if (n && !m.has(n)) m.set(n, x); });
     return m;
   }, [dataMaterial]);
 
@@ -968,7 +976,7 @@ export default function App() {
 
   /* ============================== AKSI: PO ============================== */
   const updatePoItem = (id, field, value) => setPoItems((items) => items.map((it) => (it.id === id ? { ...it, [field]: value } : it)));
-  const clearPoRow = (id) => setPoItems((items) => items.map((it) => (it.id === id ? { ...it, no: '', uraian: '', partNumber: '', qty: '', unitPrice: '', keterangan: '' } : it)));
+  const clearPoRow = (id) => setPoItems((items) => items.map((it) => (it.id === id ? { ...it, no: '', uraian: '', partNumber: '', qty: '', unitPrice: '', keterangan: '', diterima: undefined } : it)));
 
   // ---- blok sel tabel PO (seret mouse, Shift+klik, Ctrl+C / Ctrl+X / Ctrl+V, Delete) ----
   const poRange = poSel ? { r1: Math.min(poSel.ar, poSel.fr), r2: Math.max(poSel.ar, poSel.fr), c1: Math.min(poSel.ac, poSel.fc), c2: Math.max(poSel.ac, poSel.fc) } : null;
@@ -1087,7 +1095,7 @@ export default function App() {
     try {
       const payload = {
         ...poHeader, noPo: poHeader.noPo.trim(), dibuatOleh: profile.nama,
-        items: items.map(({ id, ...r }) => r)
+        items: items.map(({ id, ...r }) => clean(r))
       };
       if (editingPoId) {
         await updateDoc(doc(db, 'riwayatPo', editingPoId), { ...payload, updatedAt: serverTimestamp() });
@@ -1112,6 +1120,80 @@ export default function App() {
     savePo(true);
     window.print();
   };
+  /* ---------- PENERIMAAN BARANG DARI PO (Arsip Database PO -> Stok Masuk otomatis) ---------- */
+  const matchMat = (it) => { const pn = String(it.partNumber || '').trim().toLowerCase(); return pn ? (materialByKode.get(pn) || materialByNomor.get(pn) || null) : null; };
+  const poRecv = (po) => {
+    const items = (po.items || []).filter((i) => Number(i.qty) > 0);
+    const done = items.filter((i) => Number(i.diterima || 0) >= Number(i.qty)).length;
+    const any = items.some((i) => Number(i.diterima || 0) > 0);
+    const status = po.ditutup ? 'Ditutup' : items.length > 0 && done === items.length ? 'Lengkap' : any ? 'Sebagian' : 'Belum';
+    return { status, done, n: items.length };
+  };
+  const openTerima = (po) => {
+    setTerimaPo(po);
+    setTerimaForm({ tanggal: todayISO(), suratJalan: '', unit: '', tutup: !!po.ditutup, rows: (po.items || []).map((it) => ({ kode: matchMat(it)?.Kode || '', qtyNow: '', ket: '' })) });
+  };
+  const closeTerima = () => { setTerimaPo(null); setTerimaForm(null); };
+  const setTerimaRow = (i, patch) => setTerimaForm((f) => ({ ...f, rows: f.rows.map((r, k) => (k === i ? { ...r, ...patch } : r)) }));
+  const terimaSemuaSisa = () => setTerimaForm((f) => ({ ...f, rows: f.rows.map((r, i) => { const it = terimaPo.items[i]; const sisa = Math.max(0, (Number(it.qty) || 0) - (Number(it.diterima) || 0)); return { ...r, qtyNow: sisa > 0 ? String(sisa) : '' }; }) }));
+
+  const saveTerima = async (e) => {
+    if (e) e.preventDefault();
+    if (!canEdit) return notify('Akses ditolak!', 'error');
+    const f = terimaForm; const po = terimaPo;
+    if (!f || !po) return;
+    if (!f.tanggal) return notify('Tanggal terima wajib diisi.', 'error');
+    const lines = [];
+    for (let i = 0; i < f.rows.length; i++) {
+      const r = f.rows[i]; const qty = Number(r.qtyNow);
+      if (!(qty > 0)) continue;
+      const it = po.items[i];
+      const mat = materialByKode.get(String(r.kode).trim().toLowerCase());
+      if (!mat) return notify(`Baris ${i + 1} (${it.uraian || it.partNumber}): kode "${r.kode}" belum ada di Master Barang. Isi kolom Kode dengan kode yang benar.`, 'error');
+      lines.push({ i, it, mat, qty, ket: r.ket });
+    }
+    if (lines.length === 0 && !!f.tutup === !!po.ditutup) return notify('Isi qty "Diterima Sekarang" minimal satu baris.', 'error');
+    const lebih = lines.filter((l) => (Number(l.it.qty) || 0) > 0 && (Number(l.it.diterima) || 0) + l.qty > Number(l.it.qty));
+    if (lebih.length && !window.confirm(`${lebih.length} baris melebihi jumlah yang dipesan. Tetap simpan?`)) return;
+    setSaving(true);
+    try {
+      const poRef = doc(db, 'riwayatPo', po.id);
+      const newRefs = lines.map(() => doc(collection(db, 'barangMasuk')));
+      await runTransaction(db, async (t) => {
+        const poSnap = await t.get(poRef);
+        if (!poSnap.exists()) throw new Error('PO tidak ditemukan (mungkin sudah dihapus).');
+        const cur = poSnap.data();
+        const items = (cur.items || []).map((x) => ({ ...x }));
+        const matSnaps = {};
+        for (const id of [...new Set(lines.map((l) => l.mat.id))]) {
+          const sn = await t.get(doc(db, 'material', id));
+          if (!sn.exists()) throw new Error('Master barang tidak ditemukan.');
+          matSnaps[id] = sn;
+        }
+        const add = {};
+        lines.forEach((l, k) => {
+          const it = items[l.i];
+          const ord = Number(it.qty) || 0;
+          const got = (Number(it.diterima) || 0) + l.qty;
+          it.diterima = got;
+          add[l.mat.id] = (add[l.mat.id] || 0) + l.qty;
+          t.set(newRefs[k], {
+            Tanggal: f.tanggal, Unit: f.unit.trim(), Kode: l.mat.Kode, 'Material Number': String(l.mat['Nomor Barang'] ?? ''),
+            Description: l.mat['Nama Barang'] || it.uraian || '', Merk: l.mat.Merk || l.mat['Part Unit'] || '',
+            'No. PO': cur.noPo || '', 'No. Surat Jalan': f.suratJalan.trim(), Qty: l.qty, Satuan: l.mat.Satuan || 'Pcs',
+            'Kekurangan Supply': Math.max(0, ord - got), Keterangan: (l.ket || '').trim() || 'Penerimaan dari PO',
+            Periode: periodeOf(f.tanggal), poId: po.id, createdAt: serverTimestamp(), createdBy: profile.username
+          });
+        });
+        Object.entries(add).forEach(([id, q]) => t.update(doc(db, 'material', id), { Qty: Number(matSnaps[id].data().Qty || 0) + q }));
+        t.update(poRef, { items, ditutup: !!f.tutup, updatedAt: serverTimestamp() });
+      });
+      notify(lines.length ? `Penerimaan PO ${po.noPo} tersimpan: ${lines.length} barang masuk ke Stok Masuk & stok bertambah.` : `Status PO ${po.noPo} diperbarui.`);
+      closeTerima();
+    } catch (err) { console.error(err); notify('Gagal menyimpan penerimaan: ' + (err.message || err.code), 'error'); }
+    setSaving(false);
+  };
+
   const [poOff, setPoOff] = useState(() => { try { const v = JSON.parse(localStorage.getItem('poPrintOffset') || 'null'); if (v && Number.isFinite(v.x) && Number.isFinite(v.y)) return v; } catch (e) { /* abaikan */ } return { x: 0, y: 13 }; });
   const updatePoOff = (k, val) => { const n = { ...poOff, [k]: val }; setPoOff(n); try { localStorage.setItem('poPrintOffset', JSON.stringify(n)); } catch (e) { /* abaikan */ } };
 
@@ -2023,17 +2105,19 @@ export default function App() {
                 {SearchBox({ placeholder: "Cari no. PO, equipment, kode alat, atau nama barang..." })}
                 {cfBar('arsip')}
                 <div className={`rounded-xl shadow-sm border overflow-x-auto ${card}`}>
-                  <table className="w-full min-w-[860px] text-left text-sm">
+                  <table className="w-full min-w-[1000px] text-left text-sm">
                     <thead className={`border-b font-semibold ${thead}`}>
-                      <tr>{TH('arsip','nopo','NO. PO','p-3.5')}{TH('arsip','tanggal','TANGGAL','p-3.5')}{TH('arsip','equipment','EQUIPMENT','p-3.5')}{TH('arsip','kodealat','KODE ALAT','p-3.5')}{TH('arsip','jml','JML ITEM','p-3.5 text-center')}{TH('arsip','dibuat','DIBUAT OLEH','p-3.5')}<th className="p-3.5 text-center">AKSI</th></tr>
+                      <tr>{TH('arsip','nopo','NO. PO','p-3.5')}{TH('arsip','tanggal','TANGGAL','p-3.5')}{TH('arsip','equipment','EQUIPMENT','p-3.5')}{TH('arsip','kodealat','KODE ALAT','p-3.5')}{TH('arsip','jml','JML ITEM','p-3.5 text-center')}{TH('arsip','dibuat','DIBUAT OLEH','p-3.5')}<th className="p-3.5 text-center">STATUS<br />TERIMA</th><th className="p-3.5 text-center">AKSI</th></tr>
                     </thead>
                     <tbody className={`divide-y ${divide}`}>
-                      {listF.length === 0 ? <tr><td colSpan="7" className="p-8 text-center text-slate-400">Belum ada PO tersimpan.</td></tr> : paged(listF).map((po) => (
+                      {listF.length === 0 ? <tr><td colSpan="8" className="p-8 text-center text-slate-400">Belum ada PO tersimpan.</td></tr> : paged(listF).map((po) => (
                         <tr key={po.id} className={hoverRow}>
                           <td className="p-3.5 font-bold text-red-600">{po.noPo}</td><td className="p-3.5">{fmtDate(po.tanggal)}</td>
                           <td className="p-3.5">{po.equipment}</td><td className="p-3.5">{po.kodeAlat}</td>
                           <td className="p-3.5 text-center font-bold">{(po.items || []).length}</td><td className="p-3.5">{po.dibuatOleh}</td>
+                          <td className="p-3.5 text-center align-middle">{(() => { const rc = poRecv(po); const cls = rc.status === 'Lengkap' ? 'bg-emerald-100 text-emerald-800' : rc.status === 'Sebagian' ? 'bg-amber-100 text-amber-800' : rc.status === 'Ditutup' ? 'bg-blue-100 text-blue-800' : 'bg-slate-200 text-slate-700'; return <span className={`px-2.5 py-1 rounded-full font-bold text-[10px] whitespace-nowrap ${cls}`}>{rc.status}{rc.n > 0 && rc.status !== 'Belum' ? ` ${rc.done}/${rc.n}` : ''}</span>; })()}</td>
                           <td className="p-3.5 text-center whitespace-nowrap">
+                            {canEdit && <button onClick={() => openTerima(po)} className="px-2.5 py-1 bg-emerald-600 text-white rounded-lg font-semibold mr-1 inline-flex items-center gap-1"><ArrowDownToLine size={12} /> Terima Barang</button>}
                             <button onClick={() => openPoFromArchive(po)} className="px-2.5 py-1 bg-blue-600 text-white rounded-lg font-semibold mr-1 inline-flex items-center gap-1"><Printer size={12} /> Buka / Cetak</button>
                             {isAdmin && <button onClick={() => deletePo(po)} className="p-1.5 text-rose-500 hover:bg-rose-50 rounded"><Trash2 size={14} /></button>}
                           </td>
@@ -2436,6 +2520,49 @@ export default function App() {
               <Field label="Qty Keluar"><input type="number" min="1" required className={inputClass} value={formKeluar.qty} onChange={(e) => setFormKeluar({ ...formKeluar, qty: e.target.value })} /></Field>
             </div>
             <div className="flex justify-end gap-2 mt-4 pt-2 border-t"><button type="button" onClick={closeModalKeluar} className="px-4 py-2 border rounded-lg">Tutup</button><button disabled={saving} className="px-4 py-2 bg-amber-600 disabled:opacity-60 text-white font-semibold rounded-lg">{saving ? 'Menyimpan...' : editingKeluarId ? 'Simpan Perubahan' : 'Simpan & Lanjut'}</button></div>
+          </form>
+        </Modal>
+      )}
+
+      {/* ===================== MODAL: PENERIMAAN BARANG PO ===================== */}
+      {terimaPo && terimaForm && (
+        <Modal dark={darkMode} xwide title={`Penerimaan Barang - PO ${terimaPo.noPo}`} icon={<ArrowDownToLine size={18} className="text-emerald-500" />} onClose={closeTerima}>
+          <form onSubmit={saveTerima} onKeyDown={enterNext} className="space-y-3 text-xs">
+            <p className="text-[11px] text-slate-400">Isi kolom <b>Diterima Sekarang</b> untuk barang yang datang. Saat disimpan, tiap baris otomatis tercatat di <b>Stok Masuk</b> (lengkap dengan No. PO dan Kekurangan Supply) dan stok barang bertambah. Penerimaan bisa dicicil beberapa kali.</p>
+            <div className="grid grid-cols-4 gap-2 items-end">
+              <Field label="Tanggal Terima"><input type="date" required className={inputClass} value={terimaForm.tanggal} onChange={(e) => setTerimaForm({ ...terimaForm, tanggal: e.target.value })} /></Field>
+              <Field label="No. Surat Jalan"><input type="text" className={inputClass} value={terimaForm.suratJalan} onChange={(e) => setTerimaForm({ ...terimaForm, suratJalan: e.target.value })} /></Field>
+              <Field label="Unit (opsional)"><input type="text" className={inputClass} value={terimaForm.unit} onChange={(e) => setTerimaForm({ ...terimaForm, unit: e.target.value })} placeholder={terimaPo.kodeAlat || ''} /></Field>
+              <label className="flex items-center gap-2 pb-2 font-semibold cursor-pointer"><input type="checkbox" checked={terimaForm.tutup} onChange={(e) => setTerimaForm({ ...terimaForm, tutup: e.target.checked })} /> Tutup PO (sisa tidak dikirim)</label>
+            </div>
+            <div className="overflow-x-auto border rounded-lg border-slate-300/50">
+              <table className="w-full min-w-[820px] text-left">
+                <thead className={`border-b font-semibold ${thead}`}><tr><th className="p-2">NO</th><th className="p-2">URAIAN / PART NUMBER</th><th className="p-2">KODE (Master Barang)</th><th className="p-2">DIPESAN</th><th className="p-2">SUDAH DITERIMA</th><th className="p-2">SISA</th><th className="p-2">DITERIMA SEKARANG</th><th className="p-2">KETERANGAN</th></tr></thead>
+                <tbody className={`divide-y ${divide}`}>
+                  {(terimaPo.items || []).map((it, i) => {
+                    const ord = Number(it.qty) || 0; const got = Number(it.diterima) || 0; const sisa = Math.max(0, ord - got);
+                    const r = terimaForm.rows[i];
+                    const mat = r.kode.trim() ? materialByKode.get(r.kode.trim().toLowerCase()) : null;
+                    return (
+                      <tr key={i}>
+                        <td className="p-2 text-center">{it.no || i + 1}</td>
+                        <td className="p-2 max-w-[16rem] break-words"><div className="font-semibold">{it.uraian || '-'}</div><div className="text-slate-400">{it.partNumber || ''}</div></td>
+                        <td className="p-2 w-40"><input type="text" className={`${inputClass} !p-1.5 ${r.kode && !mat ? '!border-rose-500' : ''}`} value={r.kode} onChange={(e) => setTerimaRow(i, { kode: e.target.value })} placeholder="Kode barang" />{mat ? <div className="text-[10px] text-emerald-600 font-semibold mt-0.5">Stok: {mat.Qty}</div> : r.kode ? <div className="text-[10px] text-rose-500 font-semibold mt-0.5">Tidak ada di master</div> : null}</td>
+                        <td className="p-2 text-center font-bold">{ord || '-'}</td>
+                        <td className="p-2 text-center font-bold text-emerald-600">{got}</td>
+                        <td className={`p-2 text-center font-bold ${sisa > 0 ? 'text-rose-600' : 'text-emerald-600'}`}>{ord > 0 ? sisa : '-'}</td>
+                        <td className="p-2 w-28"><input type="number" min="0" className={`${inputClass} !p-1.5 text-center`} value={r.qtyNow} onChange={(e) => setTerimaRow(i, { qtyNow: e.target.value })} placeholder="0" /></td>
+                        <td className="p-2"><input type="text" className={`${inputClass} !p-1.5`} value={r.ket} onChange={(e) => setTerimaRow(i, { ket: e.target.value })} /></td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+            <div className="flex flex-wrap justify-between items-center gap-2 mt-2 pt-2 border-t">
+              <button type="button" onClick={terimaSemuaSisa} className="px-3 py-2 border border-emerald-500 text-emerald-700 rounded-lg font-semibold">Isi semua sisa (barang datang lengkap)</button>
+              <div className="flex gap-2"><button type="button" onClick={closeTerima} className="px-4 py-2 border rounded-lg">Batal</button><button disabled={saving} className="px-4 py-2 bg-emerald-600 disabled:opacity-60 text-white font-semibold rounded-lg">{saving ? 'Menyimpan...' : 'Simpan Penerimaan'}</button></div>
+            </div>
           </form>
         </Modal>
       )}
