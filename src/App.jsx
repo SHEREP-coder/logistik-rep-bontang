@@ -975,7 +975,23 @@ export default function App() {
   }, [dataMaterial, kartuSearch]);
 
   /* ============================== AKSI: PO ============================== */
-  const updatePoItem = (id, field, value) => setPoItems((items) => items.map((it) => (it.id === id ? { ...it, [field]: value } : it)));
+  // Nomor (kolom NO) terisi otomatis begitu kolom URAIAN diisi, bila kolom NO masih kosong
+  const updatePoItem = (id, field, value) => setPoItems((items) => {
+    const idx = items.findIndex((x) => x.id === id);
+    const nextNo = () => { const mx = items.reduce((m, x) => (x.id !== id && Number(x.no) > m ? Number(x.no) : m), 0); return String(Math.max(mx, 0) + 1); };
+    return items.map((it) => (it.id !== id ? it : { ...it, [field]: value, ...(field === 'uraian' && String(value).trim() !== '' && String(it.no).trim() === '' && idx > -1 ? { no: nextNo() } : {}) }));
+  });
+
+  // Dari Master Barang: masukkan barang ke baris kosong pertama Form PO (hanya Uraian + Material Number; Qty, Unit Price, Keterangan diisi manual)
+  const addToPo = (m) => {
+    const pn = String(m['Nomor Barang'] || m.Kode || '');
+    if (poItems.some((i) => pn && i.partNumber.trim().toLowerCase() === pn.toLowerCase())) return notify(`"${m['Nama Barang'] || pn}" sudah ada di Form PO.`, 'error');
+    const idx = poItems.findIndex((i) => !i.uraian.trim() && !i.partNumber.trim());
+    if (idx === -1) return notify(`Form PO sudah penuh (${PO_ROWS} baris). Cetak/simpan dulu atau kosongkan baris.`, 'error');
+    const mx = poItems.reduce((a, x) => (Number(x.no) > a ? Number(x.no) : a), 0);
+    setPoItems((items) => items.map((it, k) => (k === idx ? { ...it, no: String(mx + 1), uraian: m['Nama Barang'] || '', partNumber: pn } : it)));
+    notify(`"${m['Nama Barang'] || pn}" masuk Form PO baris ${idx + 1}. Qty, Unit Price & Keterangan diisi di menu Form & Cetak PO.`);
+  };
   const clearPoRow = (id) => setPoItems((items) => items.map((it) => (it.id === id ? { ...it, no: '', uraian: '', partNumber: '', qty: '', unitPrice: '', keterangan: '', diterima: undefined } : it)));
 
   // ---- blok sel tabel PO (seret mouse, Shift+klik, Ctrl+C / Ctrl+X / Ctrl+V, Delete) ----
@@ -1856,7 +1872,7 @@ export default function App() {
               <div className={`rounded-xl shadow-sm border overflow-x-auto ${card}`}>
                 <table className="w-full min-w-[1050px] text-left text-sm">
                   <thead className={`border-b font-semibold leading-tight ${thead}`}>
-                    <tr>{TH('master','kode',<>KODE /<br />BARCODE</>,'p-3')}{TH('master','nama','NAMA BARANG','p-3')}{TH('master','nomor',<>MATERIAL<br />NUMBER</>,'p-3')}{TH('master','part','PART UNIT','p-3')}{TH('master','merk','MERK','p-3')}{TH('master','base',<>BASE UNIT<br />OF MEASURE</>,'p-3')}{TH('master','satuan','SATUAN','p-3 text-center')}{TH('master','lokasi','LOKASI','p-3')}{TH('master','min','MIN','p-3 text-center')}{TH('master','stok','STOK','p-3 text-center')}{TH('master','status',<>STATUS<br />PO</>,'p-3 text-center')}{canEdit && <th className="p-3 text-center">AKSI</th>}</tr>
+                    <tr>{TH('master','kode',<>KODE /<br />BARCODE</>,'p-3')}{TH('master','nama','NAMA BARANG','p-3')}{TH('master','nomor',<>MATERIAL<br />NUMBER</>,'p-3')}{TH('master','part','PART UNIT','p-3')}{TH('master','merk','MERK','p-3')}{TH('master','base',<>BASE UNIT<br />OF MEASURE</>,'p-3')}{TH('master','satuan','SATUAN','p-3 text-center')}{TH('master','lokasi','LOKASI','p-3')}{TH('master','min','MIN','p-3 text-center')}{TH('master','stok','STOK','p-3 text-center')}{TH('master','status',<>STATUS<br />PO</>,'p-3 text-center')}<th className="p-3 text-center">AKSI</th></tr>
                   </thead>
                   <tbody className={`divide-y ${divide}`}>
                     {masterRows.length === 0 ? (
@@ -1876,12 +1892,11 @@ export default function App() {
                           <td className="p-3 text-center align-middle font-bold">{minQ}</td>
                           <td className={`p-3 text-center align-middle font-bold text-sm ${qn < 0 ? 'text-rose-600' : 'text-emerald-600'}`}>{qn}</td>
                           <td className="p-3 text-center align-middle">{qn <= minQ ? <span className="bg-rose-100 text-rose-800 px-2.5 py-1 rounded-full font-bold text-[10px]">⚠️ Perlu Order PO</span> : <span className="bg-emerald-100 text-emerald-800 px-2.5 py-1 rounded-full font-bold text-[10px]">Aman</span>}</td>
-                          {canEdit && (
-                            <td className="p-3 text-center whitespace-nowrap">
-                              <button onClick={() => openEditMaterial(item)} title="Edit" className="p-1.5 text-blue-500 hover:bg-blue-50 rounded"><Pencil size={14} /></button>
-                              {isAdmin && <button onClick={() => handleDeleteMaterial(item)} title="Hapus" className="p-1.5 text-rose-500 hover:bg-rose-50 rounded"><Trash2 size={14} /></button>}
-                            </td>
-                          )}
+                          <td className="p-3 text-center whitespace-nowrap">
+                            <button onClick={() => addToPo(item)} title="Masukkan ke Form PO" className="p-1.5 text-amber-600 hover:bg-amber-50 rounded"><ShoppingCart size={14} /></button>
+                            {canEdit && <button onClick={() => openEditMaterial(item)} title="Edit" className="p-1.5 text-blue-500 hover:bg-blue-50 rounded"><Pencil size={14} /></button>}
+                            {isAdmin && <button onClick={() => handleDeleteMaterial(item)} title="Hapus" className="p-1.5 text-rose-500 hover:bg-rose-50 rounded"><Trash2 size={14} /></button>}
+                          </td>
                         </tr>
                       );
                     })}
