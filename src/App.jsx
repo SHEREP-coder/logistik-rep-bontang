@@ -46,6 +46,11 @@ const ROWS = 20;
 const PO_KANTOR = 'BALIKPAPAN'; // tulisan di bawah nama PT pada blangko PO
 const MONTHS_ID = ['Jan', 'Feb', 'Mar', 'Apr', 'Mei', 'Jun', 'Jul', 'Agu', 'Sep', 'Okt', 'Nov', 'Des'];
 const INK = '#1e3a5f';
+// Pengaturan geser SAAT CETAK (satuan 'ch' = lebar 1 angka; negatif = ke kiri, positif = ke kanan). Ubah di sini bila perlu disetel ulang.
+const PO_SHIFT = { no: -2, uraian: -1, qty: -4, keterangan: 2 };
+// Isian Equipment/Kode Alat/Lokasi/Tanggal saat cetak: naik 2 baris (1 baris = 4,2 mm); jarak baris 1 -> baris berikutnya 1,5
+const PO_HDR_UP = 2; const PO_LINE_MM = 4.2; const PO_HDR_GAPS = [0, 0, 0.5, 1.0]; // tambahan baris per isian (jarak 1, lalu 1,5, 1,5)
+const PO_HDR_MM = PO_HDR_GAPS.map((g) => ((g - PO_HDR_UP) * PO_LINE_MM).toFixed(2));
 
 const THEMES = {
   kuning: { name: 'Kuning Emas', accent: '#eab308', accentText: '#0f172a', side: '#0f172a', sideDark: '#020617' },
@@ -1003,20 +1008,46 @@ export default function App() {
     }));
     setPoSel({ ar: r1, ac: c1, fr: Math.min(PO_ROWS - 1, r1 + grid.length - 1), fc: Math.min(PO_COLS.length - 1, c1 + Math.max(...grid.map((g) => g.length)) - 1) });
   };
-  // panah keyboard: pindah antar sel tabel PO (kiri/kanan hanya bila kursor di ujung teks)
+  // panah keyboard: pindah antar isian lembar PO (header -> tabel -> tanda tangan). Kiri/kanan hanya bila kursor di ujung teks
+  const SIG_OF_COL = [0, 0, 0, 1, 1, 2];
+  const SIG_TO_COL = [1, 3, 5];
+  const goTo = (e, sel) => {
+    const t = poSheetRef.current && poSheetRef.current.querySelector(sel);
+    if (!t) return false;
+    e.preventDefault(); t.focus();
+    try { const L = t.value.length; t.setSelectionRange(L, L); } catch (err) { /* abaikan */ }
+    return true;
+  };
+  const atStart = (el) => el.selectionStart === 0 && el.selectionEnd === 0;
+  const atEnd = (el) => el.selectionStart === el.value.length && el.selectionEnd === el.value.length;
+  const plainKey = (e) => !(e.shiftKey || e.ctrlKey || e.altKey || e.metaKey);
   const poNav = (e, r, c) => {
-    if (e.shiftKey || e.ctrlKey || e.altKey || e.metaKey) return;
+    if (!plainKey(e)) return;
     const el = e.currentTarget; let nr = r; let nc = c;
     if (e.key === 'ArrowUp') nr = r - 1;
     else if (e.key === 'ArrowDown') nr = r + 1;
-    else if (e.key === 'ArrowLeft') { if (el.selectionStart !== 0 || el.selectionEnd !== 0) return; nc = c - 1; }
-    else if (e.key === 'ArrowRight') { if (el.selectionStart !== el.value.length || el.selectionEnd !== el.value.length) return; nc = c + 1; }
+    else if (e.key === 'ArrowLeft') { if (!atStart(el)) return; nc = c - 1; }
+    else if (e.key === 'ArrowRight') { if (!atEnd(el)) return; nc = c + 1; }
     else return;
-    if (nr < 0 || nr >= PO_ROWS || nc < 0 || nc >= PO_COLS.length) return;
-    const t = poSheetRef.current && poSheetRef.current.querySelector(`[data-pocell="${nr}-${nc}"]`);
-    if (!t) return;
-    e.preventDefault(); t.focus();
-    try { const L = t.value.length; t.setSelectionRange(L, L); } catch (err) { /* abaikan */ }
+    if (nr < 0) { goTo(e, '[data-hdr="3"]'); return; }
+    if (nr >= PO_ROWS) { goTo(e, `[data-sig="0-${SIG_OF_COL[c]}"]`); return; }
+    if (nc < 0 || nc >= PO_COLS.length) return;
+    goTo(e, `[data-pocell="${nr}-${nc}"]`);
+  };
+  // isian header (No. PO, Equipment, Kode Alat, Lokasi): panah atas/bawah
+  const hdrNav = (e, i) => {
+    if (!plainKey(e)) return;
+    if (e.key === 'ArrowUp') { if (i > 0) goTo(e, `[data-hdr="${i - 1}"]`); }
+    else if (e.key === 'ArrowDown') { if (i < 3) goTo(e, `[data-hdr="${i + 1}"]`); else goTo(e, '[data-pocell="0-1"]'); }
+  };
+  // isian tanda tangan (baris 0 = nama, 1 = jabatan; kolom 0..2)
+  const sigNav = (e, row, col) => {
+    if (!plainKey(e)) return;
+    const el = e.currentTarget;
+    if (e.key === 'ArrowUp') { if (row === 1) goTo(e, `[data-sig="0-${col}"]`); else goTo(e, `[data-pocell="${PO_ROWS - 1}-${SIG_TO_COL[col]}"]`); }
+    else if (e.key === 'ArrowDown') { if (row === 0) goTo(e, `[data-sig="1-${col}"]`); }
+    else if (e.key === 'ArrowLeft') { if (atStart(el) && col > 0) goTo(e, `[data-sig="${row}-${col - 1}"]`); }
+    else if (e.key === 'ArrowRight') { if (atEnd(el) && col < 2) goTo(e, `[data-sig="${row}-${col + 1}"]`); }
   };
   const poKeyDown = (e) => {
     if (!poMulti) return;
@@ -1543,6 +1574,15 @@ export default function App() {
           #po-sheet .po-line { border-color: #fff !important; }
           #po-sheet .po-sel { background: transparent !important; }
           #po-sheet input, #po-sheet .po-val { color: #000 !important; background: transparent !important; }
+          #po-sheet input.po-nopo { color: #fff !important; }
+          #po-sheet td.po-col-0 input { transform: translateX(${PO_SHIFT.no}ch); }
+          #po-sheet td.po-col-1 input { transform: translateX(${PO_SHIFT.uraian}ch); }
+          #po-sheet td.po-col-3 input { transform: translateX(${PO_SHIFT.qty}ch); }
+          #po-sheet td.po-col-5 input { transform: translateX(${PO_SHIFT.keterangan}ch); }
+          #po-sheet .po-hv-0 { transform: translateY(${PO_HDR_MM[0]}mm); }
+          #po-sheet .po-hv-1 { transform: translateY(${PO_HDR_MM[1]}mm); }
+          #po-sheet .po-hv-2 { transform: translateY(${PO_HDR_MM[2]}mm); }
+          #po-sheet .po-hv-3 { transform: translateY(${PO_HDR_MM[3]}mm); }
           #po-sheet input::placeholder { color: transparent !important; }
           * { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
         }
@@ -1900,7 +1940,7 @@ export default function App() {
                         <span className="po-static" style={{ whiteSpace: 'pre' }}>{'No.   '}</span>
                         <span className="inline-grid border-b border-dotted po-line">
                           <span aria-hidden="true" style={{ gridArea: '1 / 1', color: 'transparent', background: 'transparent', userSelect: 'none', pointerEvents: 'none', whiteSpace: 'pre', lineHeight: 1.2 }}>{poHeader.noPo || 'Ketik no. PO'}</span>
-                          <input className="po-input text-right font-bold" placeholder="Ketik no. PO" style={{ gridArea: '1 / 1', width: 0, minWidth: '100%', color: '#c0392b', fontFamily: 'Arial, Helvetica, sans-serif', fontVariantNumeric: 'lining-nums tabular-nums', lineHeight: 1.2 }} value={poHeader.noPo} onChange={(e) => setPoHeader({ ...poHeader, noPo: e.target.value })} />
+                          <input data-hdr="0" onKeyDown={(e) => hdrNav(e, 0)} className="po-input po-nopo text-right font-bold" placeholder="Ketik no. PO" style={{ gridArea: '1 / 1', width: 0, minWidth: '100%', color: '#c0392b', fontFamily: 'Arial, Helvetica, sans-serif', fontVariantNumeric: 'lining-nums tabular-nums', lineHeight: 1.2 }} value={poHeader.noPo} onChange={(e) => setPoHeader({ ...poHeader, noPo: e.target.value })} />
                         </span>
                       </div>
                     </div>
@@ -1912,12 +1952,12 @@ export default function App() {
                 </div>
 
                 <div className="text-xs font-semibold max-w-md" style={{ marginBottom: '1.5mm' }}>
-                  {[['EQUIPMENT', 'equipment'], ['KODE ALAT', 'kodeAlat'], ['LOKASI', 'lokasi']].map(([label, key]) => (
-                    <div key={key} className="flex items-center gap-2" style={{ height: '4.2mm' }}><span className="po-static w-24 shrink-0 whitespace-nowrap">{label}</span><span className="po-static">:</span><input className="po-input po-line border-b border-dotted" style={{ height: '4.2mm', fontSize: '8.5pt' }} value={poHeader[key]} onChange={(e) => setPoHeader({ ...poHeader, [key]: e.target.value })} /></div>
+                  {[['EQUIPMENT', 'equipment'], ['KODE ALAT', 'kodeAlat'], ['LOKASI', 'lokasi']].map(([label, key], hi) => (
+                    <div key={key} className="flex items-center gap-2" style={{ height: '4.2mm' }}><span className="po-static w-24 shrink-0 whitespace-nowrap">{label}</span><span className="po-static">:</span><input data-hdr={hi + 1} onKeyDown={(e) => hdrNav(e, hi + 1)} className={`po-input po-line border-b border-dotted po-hv-${hi}`} style={{ height: '4.2mm', fontSize: '8.5pt' }} value={poHeader[key]} onChange={(e) => setPoHeader({ ...poHeader, [key]: e.target.value })} /></div>
                   ))}
                   <div className="flex items-center gap-2" style={{ height: '4.2mm' }}>
                     <span className="po-static w-24 shrink-0 whitespace-nowrap">TANGGAL</span><span className="po-static">:</span>
-                    <div className="relative inline-block" style={{ minWidth: '32mm' }}>
+                    <div className="relative inline-block po-hv-3" style={{ minWidth: '32mm' }}>
                       <span className="po-val po-line inline-block border-b border-dotted w-full" style={{ fontSize: '8.5pt', lineHeight: '4.2mm', minHeight: '4.2mm' }}>{poDateText(poHeader.tanggal) || '\u00A0'}</span>
                       <input type="date" title="Pilih tanggal" className="no-print absolute inset-0 w-full h-full opacity-0 cursor-pointer" value={poHeader.tanggal} onChange={(e) => setPoHeader({ ...poHeader, tanggal: e.target.value })} onClick={(e) => { try { e.currentTarget.showPicker && e.currentTarget.showPicker(); } catch (err) { /* abaikan */ } }} />
                     </div>
@@ -1937,7 +1977,7 @@ export default function App() {
                     {poItems.map((it, r) => (
                       <tr key={it.id} style={{ height: '5.2mm' }}>
                         {PO_COLS.map((f, c) => (
-                          <td key={f} data-cell className={`po-line ${poInSel(r, c) ? 'po-sel' : ''}`} onMouseDown={(e) => poCellDown(e, r, c)} onMouseEnter={() => poCellEnter(r, c)}
+                          <td key={f} data-cell className={`po-line po-col-${c} ${poInSel(r, c) ? 'po-sel' : ''}`} onMouseDown={(e) => poCellDown(e, r, c)} onMouseEnter={() => poCellEnter(r, c)}
                             style={{ padding: 0, position: 'relative', borderRight: c < PO_COLS.length - 1 ? `0.4mm solid ${INK}` : 'none' }}>
                             <input data-pocell={`${r}-${c}`} className={`po-input ${f === 'no' || f === 'qty' || f === 'unitPrice' ? 'text-center' : ''}`} style={{ display: 'block', height: '5.2mm', padding: '0 1.2mm', fontSize: '8.5pt', lineHeight: 1.1 }}
                               value={it[f]} onChange={(e) => updatePoItem(it.id, f, e.target.value)} onKeyDown={(e) => poNav(e, r, c)} onFocus={() => { if (!poDrag.current) setPoSel({ ar: r, ac: c, fr: r, fc: c }); }} />
@@ -1949,13 +1989,14 @@ export default function App() {
                   </tbody>
                 </table>
 
-                <div className="grid grid-cols-3 text-xs font-semibold text-center" style={{ marginTop: '2mm', padding: '0 6mm', columnGap: '10mm' }}>
-                  {[['DIKETAHUI OLEH,', 'ttd1'], ['DIKETAHUI OLEH,', 'ttd2'], ['DIBUAT OLEH,', 'ttd3']].map(([label, k]) => (
-                    <div key={k}>
+                {/* Tanda tangan: kiri sejajar kolom URAIAN (9 mm), kanan sejajar kolom KETERANGAN (151 mm) */}
+                <div className="text-xs font-semibold relative" style={{ marginTop: '2mm', height: '26mm', width: '190mm' }}>
+                  {[['DIKETAHUI OLEH,', 'ttd1', '9mm', '60mm', 'left'], ['DIKETAHUI OLEH,', 'ttd2', '70mm', '50mm', 'center'], ['DIBUAT OLEH,', 'ttd3', '151mm', '39mm', 'left']].map(([label, k, lf, w, al], ci) => (
+                    <div key={k} className="absolute top-0" style={{ left: lf, width: w, textAlign: al }}>
                       <div className="po-static" style={{ height: '4mm', lineHeight: '4mm' }}>{label}</div>
                       <div style={{ height: '13mm' }} />
-                      <input className="po-input po-line border-b border-dotted text-center font-bold" placeholder="Nama" style={{ height: '4.5mm', fontSize: '8.5pt' }} value={poHeader[k + 'Nama']} onChange={(e) => setPoHeader({ ...poHeader, [k + 'Nama']: e.target.value })} />
-                      <input className="po-input text-center" placeholder="Jabatan" style={{ height: '4mm', fontSize: '8pt', fontWeight: 600 }} value={poHeader[k + 'Jabatan']} onChange={(e) => setPoHeader({ ...poHeader, [k + 'Jabatan']: e.target.value })} />
+                      <input data-sig={`0-${ci}`} onKeyDown={(e) => sigNav(e, 0, ci)} className="po-input po-line border-b border-dotted font-bold" placeholder="Nama" style={{ height: '4.5mm', fontSize: '8.5pt', textAlign: al }} value={poHeader[k + 'Nama']} onChange={(e) => setPoHeader({ ...poHeader, [k + 'Nama']: e.target.value })} />
+                      <input data-sig={`1-${ci}`} onKeyDown={(e) => sigNav(e, 1, ci)} className="po-input" placeholder="Jabatan" style={{ height: '4mm', fontSize: '8pt', fontWeight: 600, textAlign: al }} value={poHeader[k + 'Jabatan']} onChange={(e) => setPoHeader({ ...poHeader, [k + 'Jabatan']: e.target.value })} />
                     </div>
                   ))}
                 </div>
