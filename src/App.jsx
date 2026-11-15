@@ -4,11 +4,11 @@ import {
   Search, Plus, LayoutDashboard, Box, ArrowDownToLine, ArrowUpFromLine,
   FileText, ClipboardList, BookOpen, BarChart3, Users, Settings, Moon, TrendingUp,
   TrendingDown, Calendar, X, Download, Trash2, AlertTriangle, ShoppingCart, Barcode,
-  Printer, History, LogOut, Pencil, Upload, Lock, Save, FilePlus2, Filter
+  Printer, History, LogOut, Pencil, Upload, Lock, Save, FilePlus2, Filter, Menu
 } from 'lucide-react';
 
 import {
-  supabase, supabaseSignup, chunkArr, pgMessage,
+  supabase, supabaseSignup, fetchAll, chunkArr, pgMessage,
   materialToRow, masukToRow, keluarToRow, loadMaterial, loadMasuk, loadKeluar, loadPo, loadOpname, loadUsers,
   poHeaderToRow
 } from './supabase';
@@ -110,6 +110,9 @@ const runPar = async (items, fn, size = 20) => {
 };
 const clean = (obj) => Object.fromEntries(Object.entries(obj).filter(([, v]) => v !== undefined));
 const pad2 = (n) => String(n).padStart(2, '0');
+const BLN3 = ['Jan', 'Feb', 'Mar', 'Apr', 'Mei', 'Jun', 'Jul', 'Agu', 'Sep', 'Okt', 'Nov', 'Des'];
+const blnLabel = (mo) => `${BLN3[Number(mo.slice(5, 7)) - 1]} ${mo.slice(2, 4)}`;
+const TREN_COLORS = ['#2563eb', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#06b6d4'];
 const todayISO = () => { const d = new Date(); return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`; };
 
 const toISODate = (v) => {
@@ -147,6 +150,7 @@ const newPoHeader = () => ({ noPo: '', equipment: '', kodeAlat: '', lokasi: 'Bon
 const poDateText = (iso) => { const p = dateParts(iso); return p ? `${String(p.d).padStart(2, '0')}-${MONTHS_ID[p.m - 1]}-${p.y}` : ''; };
 const poNumberValue = (s) => { const m = String(s || '').match(/(\d+)\s*$/); return m ? Number(m[1]) : 0; };
 // Periode 'YYYY-MM' dipakai untuk pengelompokan transaksi per bulan
+const NAMA_BULAN = ['Januari', 'Februari', 'Maret', 'April', 'Mei', 'Juni', 'Juli', 'Agustus', 'September', 'Oktober', 'November', 'Desember'];
 const periodeOf = (v) => { const iso = toISODate(v); return iso ? iso.slice(0, 7) : 'Tanpa-Tanggal'; };
 const formatPoNumber = (n) => `A ${String(n).padStart(6, '0')}`;
 
@@ -330,7 +334,8 @@ export default function App() {
     return () => clearTimeout(id);
   }, [toast]);
 
-  const goTab = (name) => { setActiveTab(name); setPencarian(''); setPage(1); };
+  const [sideOpen, setSideOpen] = useState(false); // menu samping pada layar kecil (HP)
+  const goTab = (name) => { setActiveTab(name); setPencarian(''); setPage(1); setSideOpen(false); };
 
   /* ---------- AUTH (Supabase) ---------- */
   const loadProfile = async (u) => {
@@ -482,17 +487,45 @@ export default function App() {
 
   const poNeededItems = useMemo(() => dataMaterial.filter((i) => Number(i.Qty || 0) <= Number(i.MinQty ?? 5)), [dataMaterial]);
 
-  // ringkasan untuk dashboard (Rekap Stok, Stok Opname, PO)
+  // ---- Dashboard mengikuti Filter Periode (bulan/tahun) ----
+  const periodActive = !!(selectedMonth || selectedYear);
+  const periodLabel = selectedMonth && selectedYear ? `${NAMA_BULAN[Number(selectedMonth) - 1]} ${selectedYear}`
+    : selectedMonth ? `${NAMA_BULAN[Number(selectedMonth) - 1]} (semua tahun)`
+    : selectedYear ? `Tahun ${selectedYear}` : 'Semua periode';
+  // Bulan paling kanan pada grafik tren: bulan yang dipilih (tanpa tahun = kemunculan terbaru bulan itu)
+  const periodEnd = (() => {
+    const now = new Date(); const cy = now.getFullYear(); const cm = now.getMonth() + 1;
+    const sm = Number(selectedMonth) || 0; const sy = Number(selectedYear) || 0;
+    if (sy && sm) return { y: sy, m: sm };
+    if (sy) return { y: sy, m: sy === cy ? cm : 12 };
+    if (sm) return { y: sm <= cm ? cy : cy - 1, m: sm };
+    return { y: cy, m: cm };
+  })();
+  const masukP = useMemo(() => dataMasuk.filter((r) => matchesPeriod(r.Tanggal)), [dataMasuk, selectedMonth, selectedYear]); // eslint-disable-line
+  const keluarP = useMemo(() => dataKeluar.filter((r) => matchesPeriod(r['Doc.Date'])), [dataKeluar, selectedMonth, selectedYear]); // eslint-disable-line
+  // Barang "bergerak" = ada transaksi masuk/keluar pada periode terpilih (tanpa filter = seluruh master)
+  const materialAktif = useMemo(() => {
+    if (!periodActive) return dataMaterial;
+    const s = new Set();
+    masukP.forEach((r) => s.add(String(r.Kode || '').toLowerCase()));
+    keluarP.forEach((r) => s.add(String(r.Kode || '').toLowerCase()));
+    return dataMaterial.filter((m) => s.has(String(m.Kode || '').toLowerCase()));
+  }, [dataMaterial, masukP, keluarP, periodActive]);
+  const poNeededP = useMemo(() => materialAktif.filter((i) => Number(i.Qty || 0) <= Number(i.MinQty ?? 5)), [materialAktif]);
+  const opnameP = useMemo(() => riwayatOpname.filter((o) => matchesPeriod(o.tanggal)), [riwayatOpname, selectedMonth, selectedYear]); // eslint-disable-line
+  const lastOpnameP = useMemo(() => [...opnameP].sort((a, b) => String(b.tanggal || '').localeCompare(String(a.tanggal || '')))[0] || null, [opnameP]);
+  const poP = useMemo(() => riwayatPo.filter((p) => matchesPeriod(p.tanggal)), [riwayatPo, selectedMonth, selectedYear]); // eslint-disable-line
+  const lastPoP = useMemo(() => poP.reduce((best, p) => (!best || poNumberValue(p.noPo) > poNumberValue(best.noPo) ? p : best), null), [poP]);
+
+  // ringkasan untuk dashboard (Rekap Stok): stok = stok saat ini dari barang aktif; masuk/keluar = qty pada periode
   const dashRekap = useMemo(() => {
     let stok = 0, habis = 0;
-    dataMaterial.forEach((m) => { const q = Number(m.Qty || 0); stok += q; if (q <= 0) habis += 1; });
+    materialAktif.forEach((m) => { const q = Number(m.Qty || 0); stok += q; if (q <= 0) habis += 1; });
     let masuk = 0, keluar = 0;
-    dataMasuk.forEach((r) => { masuk += Number(r.Qty || 0); });
-    dataKeluar.forEach((r) => { keluar += Number(r.Qty || 0); });
+    masukP.forEach((r) => { masuk += Number(r.Qty || 0); });
+    keluarP.forEach((r) => { keluar += Number(r.Qty || 0); });
     return { stok, habis, masuk, keluar };
-  }, [dataMaterial, dataMasuk, dataKeluar]);
-  const lastOpname = useMemo(() => [...riwayatOpname].sort((a, b) => String(b.tanggal || '').localeCompare(String(a.tanggal || '')))[0] || null, [riwayatOpname]);
-  const lastPo = useMemo(() => riwayatPo.reduce((best, p) => (!best || poNumberValue(p.noPo) > poNumberValue(best.noPo) ? p : best), null), [riwayatPo]);
+  }, [materialAktif, masukP, keluarP]);
 
   const partUnitOptions = useMemo(() => {
     const st = new Set();
@@ -514,7 +547,7 @@ export default function App() {
     master: {
       kode: ['Kode / Barcode', (i) => i.Kode || ''], nama: ['Nama Barang', (i) => i['Nama Barang'] || ''],
       nomor: ['Material Number', (i) => String(i['Nomor Barang'] ?? '')], part: ['Part Unit', (i) => i['Part Unit'] || ''], merk: ['Merk', (i) => i.Merk || ''],
-      base: ['Base Unit of Measure', (i) => i['Base Unit of Measure'] || ''], satuan: ['Satuan', (i) => i.Satuan || ''],
+      base: ['Keterangan', (i) => i['Base Unit of Measure'] || ''], satuan: ['Satuan', (i) => i.Satuan || ''],
       lokasi: ['Lokasi', (i) => i.Lokasi || 'Rak A1'], min: ['Min', (i) => String(Number(i.MinQty ?? 5))],
       stok: ['Stok', (i) => String(Number(i.Qty || 0))],
       status: ['Status PO', (i) => (Number(i.Qty || 0) <= Number(i.MinQty ?? 5) ? 'Perlu Order PO' : 'Aman')]
@@ -1255,31 +1288,47 @@ export default function App() {
 
       const str = (v) => (v === undefined || v === null ? '' : String(v).trim());
       const num = (v, d = 0) => { const n = Number(v); return Number.isFinite(n) ? n : d; };
-      // Sheet MATERIAL: Part Unit = kolom F, Base Unit of Measure = kolom H
-      const partUnitOf = (r) => str(colVal(r, 'F'));
-      const baseUnitOf = (r) => str(colVal(r, 'H'));
+      // Sheet MATERIAL: nama header dibaca TANPA peduli huruf besar/kecil & tanda baca
+      // ("KODE /" = Kode, "NAMA BARANG", "MATERIAL NUMBER", "PART UNIT" (kolom pertama) dan "PART UNIT" kedua = Base Unit, "LOKASI", "MIN", "STOK").
+      // Bila header tidak ditemukan, jatuh ke posisi kolom lama (F = Part Unit, H = Base Unit).
+      const kodeOf = (r) => str(pickVal(r, ['kode', 'kodebarang', 'kodematerial']));
+      const partUnitOf = (r) => { const v = pickVal(r, ['partunit']); return str(v !== undefined ? v : colVal(r, 'F')); };
+      const baseUnitOf = (r) => { const v = pickVal(r, ['partunit1', 'baseunitofmeasure', 'baseunit', 'uom']); return str(v !== undefined ? v : colVal(r, 'H')); };
       const satuanOf = (r) => {
-        const v = pickVal(r, ['satuan', 'uom']);
+        const v = pickVal(r, ['satuan']);
         if (v !== undefined && v !== null && String(v).trim() !== '') return String(v).trim();
-        return typeof r.Qty === 'string' && !Number.isFinite(Number(r.Qty)) ? r.Qty.trim() : '';
+        return baseUnitOf(r);
       };
+      const namaOf = (r) => str(pickVal(r, ['namabarang', 'nama', 'description']));
+      const nomorOf = (r) => str(pickVal(r, ['nomorbarang', 'materialnumber', 'partnumber']));
+      const lokasiOf = (r) => str(pickVal(r, ['lokasi', 'location']));
+      const stokOf = (r) => num(pickVal(r, ['stok', 'stock', 'qty']));
+      const minOf = (r) => { const v = pickVal(r, ['min', 'minqty', 'minimum']); return v === undefined || str(v) === '' ? 5 : num(v, 5); };
+
+      if (matRows.length && !matRows.some((r) => kodeOf(r))) {
+        throw new Error(`Kolom Kode tidak ditemukan di sheet MATERIAL. Header terbaca: ${hdrInfo(matRows)}`);
+      }
 
       // 1) MATERIAL: tambah barang baru; barang lama hanya dilengkapi/disinkronkan (stok TIDAK ditimpa)
       const existingIds = new Set(dataMaterial.map((m) => m.id));
-      const newMat = matRows.filter((r) => r.Kode !== undefined && String(r.Kode).trim() !== '' && !existingIds.has(safeId(r.Kode)))
-        .map((r) => {
-          const kode = String(r.Kode).trim();
+      const seenKode = new Set();
+      const newMat = matRows.filter((r) => {
+        const id = safeId(kodeOf(r));
+        if (!id || existingIds.has(id) || seenKode.has(id)) return false;
+        seenKode.add(id); return true;
+      }).map((r) => {
+          const kode = kodeOf(r);
           return { id: safeId(kode), data: {
-            Kode: kode, 'Nama Barang': str(r['Nama Barang']), 'Nomor Barang': str(r['Nomor Barang']),
+            Kode: kode, 'Nama Barang': namaOf(r), 'Nomor Barang': nomorOf(r),
             'Part Unit': partUnitOf(r), 'Base Unit of Measure': baseUnitOf(r),
             Satuan: satuanOf(r),
-            Qty: num(r.Qty), Lokasi: str(r.Lokasi) || 'Rak A1', MinQty: r.MinQty !== undefined ? num(r.MinQty, 5) : 5,
+            Qty: stokOf(r), Lokasi: lokasiOf(r) || 'Rak A1', MinQty: minOf(r),
             createdBy: profile.username
           } };
         });
       const existingById = new Map(dataMaterial.map((m) => [m.id, m]));
-      const backfill = matRows.filter((r) => r.Kode !== undefined && String(r.Kode).trim() !== '').map((r) => {
-        const id = safeId(r.Kode); const ex = existingById.get(id);
+      const backfill = matRows.filter((r) => kodeOf(r) !== '').map((r) => {
+        const id = safeId(kodeOf(r)); const ex = existingById.get(id);
         if (!ex) return null;
         const upd = {};
         const sat = satuanOf(r); if (!ex.Satuan && sat) upd.Satuan = sat;
@@ -1384,8 +1433,11 @@ export default function App() {
         }
       }
 
+      setImportMsg('Memuat ulang data...');
+      await refreshTable('materials'); await refreshTable('barang_masuk'); await refreshTable('barang_keluar');
       setImportMsg([
-        'Selesai.',
+        'Selesai. (impor v2)',
+        `Baris MATERIAL terbaca: ${matRows.length}, berkode: ${matRows.filter((r) => kodeOf(r)).length}, sudah ada di database: ${matRows.filter((r) => kodeOf(r) && existingIds.has(safeId(kodeOf(r)))).length}`,
         `• Master barang: baru ${newMat.length}, diperbarui ${filled}`,
         `• Barang masuk: baru ${masukCount}, dilengkapi ${fillM}`,
         `• Barang keluar: baru ${keluarCount}, dilengkapi ${fillK}`,
@@ -1499,6 +1551,191 @@ export default function App() {
     );
   };
 
+  /* ---------- LAPORAN PEMAKAIAN BARANG (rentang tanggal -> Excel) ---------- */
+  const SATUAN_CAIR = ['liter', 'ltr', 'l', 'drum', 'pail', 'jerigen', 'kaleng', 'botol', 'galon'];
+  const isoOf = (d) => `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
+  const [rpt, setRpt] = useState(() => { const d = new Date(); return { from: isoOf(new Date(d.getFullYear(), d.getMonth(), 1)), to: todayISO(), kode: '', kw: '', cair: false }; });
+  const [rptRows, setRptRows] = useState(null);
+  const [rptBusy, setRptBusy] = useState(false);
+  const setRptField = (k, v) => { setRpt((p) => ({ ...p, [k]: v })); setRptRows(null); };
+  const setRptBulan = (offset) => {
+    const d = new Date();
+    setRpt((p) => ({ ...p, from: isoOf(new Date(d.getFullYear(), d.getMonth() + offset, 1)), to: isoOf(new Date(d.getFullYear(), d.getMonth() + offset + 1, 0)) }));
+    setRptRows(null);
+  };
+
+  const runPemakaian = async () => {
+    if (!rpt.from || !rpt.to) return notify('Isi tanggal "Dari" dan "Sampai".', 'error');
+    if (rpt.from > rpt.to) return notify('Tanggal "Dari" tidak boleh lebih besar dari "Sampai".', 'error');
+    setRptBusy(true);
+    try {
+      const raw = await fetchAll(() => supabase.from('barang_keluar').select('*')
+        .gte('doc_date', rpt.from).lte('doc_date', rpt.to).order('doc_date').order('id'));
+      const kodes = rpt.kode.split(',').map((x) => x.trim().toLowerCase()).filter(Boolean);
+      const kws = kodes.length ? [] : rpt.kw.split(',').map((x) => x.trim().toLowerCase()).filter(Boolean);
+      const rows = raw.map((r) => {
+        const m = materialByKode.get(String(r.kode || '').toLowerCase());
+        return {
+          Tanggal: r.doc_date || '', Unit: r.unit || '', Kode: r.kode,
+          'Nama Barang': (m && m['Nama Barang']) || r.nama_barang || '',
+          'Nomor Barang': (m && m['Nomor Barang']) || r.nomor_barang || '',
+          Qty: Number(r.qty) || 0, Satuan: (m && m.Satuan) || '',
+          Mekanik: r.mekanik || '', 'No. WO': r.no_wo || '', 'HM/KM': r.hm_km || '', Keterangan: r.keterangan || ''
+        };
+      }).filter((x) => (kodes.length ? kodes.includes(String(x.Kode).toLowerCase()) : (kws.length === 0 || kws.some((k) => x['Nama Barang'].toLowerCase().includes(k) || String(x.Kode).toLowerCase() === k)))
+        && (!rpt.cair || SATUAN_CAIR.includes(String(x.Satuan).trim().toLowerCase())));
+      setRptRows(rows);
+      if (rows.length === 0) notify('Tidak ada transaksi yang cocok pada rentang tanggal ini.', 'error');
+    } catch (err) { console.error(err); notify('Gagal mengambil data: ' + pgMessage(err), 'error'); }
+    setRptBusy(false);
+  };
+
+  const rptSummary = useMemo(() => {
+    if (!rptRows) return null;
+    const group = (keyFn, base) => {
+      const mp = new Map();
+      rptRows.forEach((x) => {
+        const k = keyFn(x);
+        const cur = mp.get(k) || { ...base(x), 'Jumlah Transaksi': 0, 'Total Qty': 0 };
+        cur['Jumlah Transaksi'] += 1; cur['Total Qty'] += x.Qty;
+        mp.set(k, cur);
+      });
+      return Array.from(mp.values());
+    };
+    const barang = group((x) => x.Kode, (x) => ({ Kode: x.Kode, 'Nama Barang': x['Nama Barang'], Satuan: x.Satuan, 'Stok Saat Ini': Number((materialByKode.get(String(x.Kode).toLowerCase()) || {}).Qty ?? 0) }))
+      .sort((a, b) => b['Total Qty'] - a['Total Qty']);
+    const unit = group((x) => `${x.Unit}|${x.Kode}`, (x) => ({ Unit: x.Unit || '(tanpa unit)', Kode: x.Kode, 'Nama Barang': x['Nama Barang'], Satuan: x.Satuan }))
+      .sort((a, b) => String(a.Unit).localeCompare(String(b.Unit)) || b['Total Qty'] - a['Total Qty']);
+    const perSatuan = new Map();
+    rptRows.forEach((x) => perSatuan.set(x.Satuan || '-', (perSatuan.get(x.Satuan || '-') || 0) + x.Qty));
+    return { barang, unit, detail: rptRows, perSatuan: Array.from(perSatuan.entries()) };
+  }, [rptRows, materialByKode]);
+
+  // Kode (boleh beberapa, pisahkan koma) -> nama barang otomatis dari Master Barang
+  const rptKodeInfo = useMemo(() => {
+    const codes = rpt.kode.split(',').map((x) => x.trim()).filter(Boolean);
+    const found = []; const missing = [];
+    codes.forEach((c) => { const m = materialByKode.get(c.toLowerCase()); if (m) found.push(m); else missing.push(c); });
+    return { active: codes.length > 0, names: found.map((m) => m['Nama Barang'] || m.Kode).join(', '), missing };
+  }, [rpt.kode, materialByKode]);
+  const kodeOptions = useMemo(() => dataMaterial.map((m) => <option key={m.id || m.Kode} value={m.Kode}>{m['Nama Barang']}</option>), [dataMaterial]);
+
+  const downloadPemakaian = () => {
+    if (!rptSummary || rptSummary.detail.length === 0) return notify('Tampilkan data dulu; belum ada transaksi untuk diunduh.', 'error');
+    const tagSrc = rpt.kode.trim() || rpt.kw.trim();
+    const tag = tagSrc ? tagSrc.replace(/[^a-z0-9]+/gi, '-').replace(/^-|-$/g, '') : 'Semua';
+    downloadSheets(`Pemakaian_${tag}_${rpt.from}_sd_${rpt.to}.xlsx`, {
+      'Ringkasan Barang': rptSummary.barang, 'Per Unit': rptSummary.unit, 'Detail Transaksi': rptSummary.detail
+    });
+  };
+
+  /* ---------- DASHBOARD: PO KURANG SUPPLY & TREN PENGGUNAAN ---------- */
+  // Pastikan halaman memakai lebar layar perangkat (agar tampilan HP menyesuaikan)
+  useEffect(() => {
+    let m = document.querySelector('meta[name="viewport"]');
+    if (!m) { m = document.createElement('meta'); m.name = 'viewport'; document.head.appendChild(m); }
+    m.content = 'width=device-width, initial-scale=1';
+  }, []);
+
+  const [kurangOpen, setKurangOpen] = useState(false);
+  const [kurangKode, setKurangKode] = useState(null);
+  const [kurangQ, setKurangQ] = useState('');
+  const [tren, setTren] = useState({ by: 'partunit', metric: 'trx', months: 6 });
+
+  // Baris PO yang penerimaannya masih kurang. Satu baris = satu PO + satu kode (penerimaan terakhir menentukan sisa kurangnya).
+  // Impor Excel menyimpan kekurangan sebagai angka negatif, aplikasi menyimpannya positif; keduanya dibaca sebagai "kurang".
+  const kurangSupply = useMemo(() => {
+    const closed = new Set(riwayatPo.filter((p) => p.ditutup).map((p) => String(p.noPo).trim().toLowerCase()));
+    const groups = new Map();
+    masukP.forEach((r) => {
+      const po = String(r['No. PO'] || '').trim();
+      const key = po ? `${po.toLowerCase()}|${String(r.Kode).toLowerCase()}` : `#${r.id}`;
+      if (!groups.has(key)) groups.set(key, []);
+      groups.get(key).push(r);
+    });
+    const lines = [];
+    groups.forEach((rows) => {
+      rows.sort((a, b) => String(a.Tanggal).localeCompare(String(b.Tanggal)) || Number(a.id) - Number(b.id));
+      const last = rows[rows.length - 1];
+      const kurang = Math.abs(Number(last['Kekurangan Supply']) || 0);
+      const po = String(last['No. PO'] || '').trim();
+      if (kurang <= 0 || (po && closed.has(po.toLowerCase()))) return;
+      lines.push({ id: last.id, po, kode: last.Kode, kurang, tanggal: last.Tanggal, unit: last.Unit || '', suratJalan: last['No. Surat Jalan'] || '', ket: last.Keterangan || '' });
+    });
+    const byKode = new Map();
+    lines.forEach((l) => {
+      const m = materialByKode.get(String(l.kode).toLowerCase());
+      const cur = byKode.get(l.kode) || { kode: l.kode, nama: (m && m['Nama Barang']) || '', satuan: (m && m.Satuan) || '', total: 0, lines: [] };
+      cur.total += l.kurang; cur.lines.push(l); byKode.set(l.kode, cur);
+    });
+    const list = Array.from(byKode.values()).sort((a, b) => b.lines.length - a.lines.length || String(a.kode).localeCompare(String(b.kode)));
+    list.forEach((g) => g.lines.sort((a, b) => String(b.tanggal).localeCompare(String(a.tanggal))));
+    return { lines, list };
+  }, [masukP, riwayatPo, materialByKode]);
+
+  const downloadKurang = () => {
+    if (kurangSupply.list.length === 0) return notify('Tidak ada PO yang kurang supply.', 'error');
+    const detail = kurangSupply.list.flatMap((g) => g.lines.map((l) => ({
+      Kode: g.kode, 'Nama Barang': g.nama, Satuan: g.satuan, 'No. PO': l.po || '(tanpa No. PO)', Tanggal: l.tanggal,
+      Unit: l.unit, 'No. Surat Jalan': l.suratJalan, Kurang: l.kurang, Keterangan: l.ket
+    })));
+    const ringkas = kurangSupply.list.map((g) => ({ Kode: g.kode, 'Nama Barang': g.nama, Satuan: g.satuan, 'Jumlah PO': g.lines.length, 'Total Kurang': g.total }));
+    downloadSheets('PO_Kurang_Supply.xlsx', { 'Ringkasan per Barang': ringkas, 'Detail PO': detail });
+  };
+
+  // Tren penggunaan (dari barang keluar) per bulan, dikelompokkan menurut Part Unit atau jenis barang
+  const trenData = useMemo(() => {
+    const months = [];
+    for (let i = tren.months - 1; i >= 0; i--) {
+      const d = new Date(periodEnd.y, periodEnd.m - 1 - i, 1);
+      months.push(`${d.getFullYear()}-${pad2(d.getMonth() + 1)}`);
+    }
+    const monthSet = new Set(months);
+    const infoOf = (r) => materialByKode.get(String(r.Kode).toLowerCase());
+    const groupOf = (r) => {
+      const m = infoOf(r);
+      if (tren.by === 'partunit') return (String((m && m['Part Unit']) || '').trim().toUpperCase()) || 'TANPA KELOMPOK';
+      const nama = String((m && m['Nama Barang']) || r['Nama Barang'] || '').trim().toUpperCase();
+      const sat = String((m && m.Satuan) || '').trim().toLowerCase();
+      if (SATUAN_CAIR.includes(sat)) return 'OLI & CAIRAN';
+      if (nama.includes('FILTER')) return 'FILTER';
+      return nama.split(/[^A-Z0-9]+/).filter(Boolean)[0] || 'LAINNYA';
+    };
+    const rows = dataKeluar.filter((r) => monthSet.has(String(r.Periode)));
+    const tot = new Map(); const cell = new Map(); const bB = new Map(); const bU = new Map();
+    rows.forEach((r) => {
+      const g = groupOf(r); const v = tren.metric === 'qty' ? (Number(r.Qty) || 0) : 1;
+      tot.set(g, (tot.get(g) || 0) + v);
+      cell.set(`${r.Periode}|${g}`, (cell.get(`${r.Periode}|${g}`) || 0) + v);
+    });
+    // Daftar teratas: tepat sesuai Filter Periode (tanpa filter = sama dengan jendela grafik)
+    const listRows = periodActive ? keluarP : rows;
+    listRows.forEach((r) => {
+      const m = infoOf(r);
+      const b = bB.get(r.Kode) || { kode: r.Kode, nama: (m && m['Nama Barang']) || r['Nama Barang'] || '', satuan: (m && m.Satuan) || '', trx: 0, qty: 0 };
+      b.trx += 1; b.qty += Number(r.Qty) || 0; bB.set(r.Kode, b);
+      const u = String(r.Unit || '').trim() || '(tanpa unit)';
+      bU.set(u, (bU.get(u) || 0) + 1);
+    });
+    const top = Array.from(tot.entries()).sort((a, b) => b[1] - a[1]).slice(0, 6).map(([g]) => g);
+    const groups = [...top, ...(tot.size > top.length ? ['Lainnya'] : [])];
+    const cols = months.map((mo) => {
+      const seg = groups.map((g) => {
+        let v = 0;
+        if (g === 'Lainnya') tot.forEach((_, gg) => { if (!top.includes(gg)) v += cell.get(`${mo}|${gg}`) || 0; });
+        else v = cell.get(`${mo}|${g}`) || 0;
+        return { g, v };
+      });
+      return { mo, seg, sum: seg.reduce((a, x) => a + x.v, 0) };
+    });
+    return {
+      cols, groups, total: rows.length, totalList: listRows.length, max: Math.max(1, ...cols.map((c) => c.sum)),
+      topBarang: Array.from(bB.values()).sort((a, b) => b.trx - a.trx || b.qty - a.qty).slice(0, 8),
+      topUnit: Array.from(bU.entries()).sort((a, b) => b[1] - a[1]).slice(0, 8)
+    };
+  }, [dataKeluar, materialByKode, tren, periodEnd.y, periodEnd.m, periodActive, keluarP]); // eslint-disable-line
+  const trenColor = (g, i) => (g === 'Lainnya' ? '#94a3b8' : TREN_COLORS[i % TREN_COLORS.length]);
+
   const downloadSheets = (filename, sheets) => {
     const wb = XLSX.utils.book_new();
     Object.entries(sheets).forEach(([name, rows]) => XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(rows.map(stripMeta)), name));
@@ -1577,6 +1814,17 @@ export default function App() {
         .app-main::-webkit-scrollbar-thumb, .overflow-x-auto::-webkit-scrollbar-thumb { background: #94a3b8; border-radius: 8px; border: 3px solid transparent; background-clip: content-box; }
         .app-main::-webkit-scrollbar-track, .overflow-x-auto::-webkit-scrollbar-track { background: rgba(148,163,184,0.2); }
         .po-sel { background: rgba(59,130,246,0.22); }
+        /* Laptop/PC (mouse): tampilan tidak menciut saat di-zoom; muncul bar geser kiri-kanan. HP (layar sentuh) tidak berubah. */
+        @media screen and (hover: hover) and (pointer: fine) {
+          .app-root { overflow-x: auto; overflow-y: hidden; }
+          .app-side { position: static !important; transform: none !important; max-width: none !important; z-index: auto !important; }
+          .app-menu-btn, .app-backdrop { display: none !important; }
+          .app-content { min-width: 980px !important; }
+          .app-root::-webkit-scrollbar { width: 14px; height: 14px; }
+          .app-root::-webkit-scrollbar-thumb { background: #94a3b8; border-radius: 8px; border: 3px solid transparent; background-clip: content-box; }
+          .app-root::-webkit-scrollbar-track { background: rgba(148,163,184,0.2); }
+          .app-root { scrollbar-width: auto; scrollbar-color: #94a3b8 rgba(148,163,184,0.2); }
+        }
         @media print {
           html { font-size: 16px !important; }
           html, body, #root, .app-root, .app-main, .app-content { overflow: visible !important; height: auto !important; display: block !important; background: #fff !important; }
@@ -1614,7 +1862,8 @@ export default function App() {
       )}
 
       {/* SIDEBAR */}
-      <div className="no-print w-72 shrink-0 flex flex-col border-r border-slate-800 text-slate-300" style={{ background: 'var(--side)' }}>
+      {sideOpen && <div className="app-backdrop no-print fixed inset-0 z-40 bg-black/50 lg:hidden" onClick={() => setSideOpen(false)} />}
+      <div className={`app-side no-print fixed inset-y-0 left-0 z-50 w-72 max-w-[85vw] transform transition-transform duration-200 lg:static lg:z-auto lg:max-w-none lg:translate-x-0 shrink-0 flex flex-col border-r border-slate-800 text-slate-300 ${sideOpen ? 'translate-x-0' : '-translate-x-full'}`} style={{ background: 'var(--side)' }}>
         <div className="p-4 border-b border-slate-800 flex items-center gap-3" style={{ background: 'var(--side-dark)' }}>
           <div className="w-10 h-10 flex items-center justify-center">
             <img src="/logo_PT_REP_transparan.png" alt="Logo" className="w-full h-full object-contain" />
@@ -1658,14 +1907,17 @@ export default function App() {
       {/* KONTEN UTAMA */}
       <div className="app-content flex-1 min-w-0 flex flex-col overflow-hidden">
         <header className={`no-print p-4 border-b flex flex-wrap gap-2 justify-between items-center shadow-sm ${darkMode ? 'bg-slate-900 border-slate-800' : 'bg-white border-slate-200'}`}>
-          <div>
-            <h1 className="text-xl font-bold flex items-center gap-2">
+          <div className="flex items-center gap-2.5 min-w-0">
+            <button onClick={() => setSideOpen(true)} className="app-menu-btn lg:hidden p-2 -ml-1 rounded-lg border border-slate-300 text-slate-600" aria-label="Buka menu"><Menu size={20} /></button>
+            <div className="min-w-0">
+            <h1 className="text-lg sm:text-xl font-bold flex items-center gap-2">
               {activeTab}
               {(loadingCloud || loadingTrx) && <span className="text-xs text-yellow-500 font-normal animate-pulse">☁️ Sinkronisasi Cloud...</span>}
             </h1>
             <p className="text-xs text-slate-400">Logistic Management System - PT. Ryan Eka Pratama Site Bontang</p>
+            </div>
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
             {canEdit ? (
               <>
                 <button onClick={openNewMaterial} className="bg-emerald-600 hover:bg-emerald-700 text-white px-3 py-1.5 text-xs font-semibold rounded-lg flex items-center gap-1"><Plus size={14} /> Produk Baru</button>
@@ -1676,7 +1928,7 @@ export default function App() {
           </div>
         </header>
 
-        <main className="app-main flex-1 p-6 overflow-auto">
+        <main className="app-main flex-1 p-3 sm:p-6 overflow-auto">
 
           {emptyHint && activeTab !== 'Pengaturan' && activeTab !== 'Pengguna' && (
             <div className="no-print mb-4 p-4 rounded-xl border border-yellow-300 bg-yellow-50 text-yellow-900 text-xs font-medium">
@@ -1689,91 +1941,163 @@ export default function App() {
             <div className="space-y-6">
               {dataRangeBar('Jumlah transaksi & ringkasan Rekap mengikuti rentang ini; stok barang tetap akurat.')}
               {PeriodFilter()}
-              <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-                <div onClick={() => goTab('Master Barang')} className={`p-5 rounded-xl border shadow-sm flex items-center justify-between cursor-pointer hover:border-blue-400 ${card}`}>
-                  <div><p className="text-xs font-semibold text-slate-400 uppercase">Total Master Barang</p><h3 className="text-2xl font-bold mt-1 text-blue-600">{dataMaterial.length} Item</h3></div>
-                  <div className="p-3 bg-blue-50 text-blue-600 rounded-xl"><Box size={24} /></div>
+              <p className="text-[11px] text-slate-500 px-1 -mt-3">Kartu dan grafik di bawah mengikuti Filter Periode: <b>{periodLabel}</b>.{periodActive ? ' Stok dan Wajib Order dihitung dari barang yang bergerak (masuk/keluar) pada periode ini.' : ''}</p>
+              <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
+                <div onClick={() => goTab('Master Barang')} className={`p-3 sm:p-5 rounded-xl border shadow-sm flex items-center justify-between gap-2 cursor-pointer hover:border-blue-400 ${card}`}>
+                  <div><p className="text-xs font-semibold text-slate-400 uppercase">Total Master Barang</p><h3 className="text-lg sm:text-2xl font-bold mt-1 text-blue-600">{dataMaterial.length} Item</h3>{periodActive && <p className="text-[11px] text-slate-400 mt-1">{materialAktif.length} barang bergerak pada periode</p>}</div>
+                  <div className="hidden sm:block p-3 bg-blue-50 text-blue-600 rounded-xl"><Box size={24} /></div>
                 </div>
-                <div onClick={() => goTab('Stok Masuk')} className={`p-5 rounded-xl border shadow-sm flex items-center justify-between cursor-pointer hover:border-emerald-400 ${card}`}>
-                  <div><p className="text-xs font-semibold text-slate-400 uppercase">Barang Masuk</p><h3 className="text-2xl font-bold mt-1 text-emerald-600">{filteredMasuk.length} Trx</h3></div>
-                  <div className="p-3 bg-emerald-50 text-emerald-600 rounded-xl"><TrendingUp size={24} /></div>
+                <div onClick={() => goTab('Stok Masuk')} className={`p-3 sm:p-5 rounded-xl border shadow-sm flex items-center justify-between gap-2 cursor-pointer hover:border-emerald-400 ${card}`}>
+                  <div><p className="text-xs font-semibold text-slate-400 uppercase">Barang Masuk</p><h3 className="text-lg sm:text-2xl font-bold mt-1 text-emerald-600">{masukP.length} Trx</h3></div>
+                  <div className="hidden sm:block p-3 bg-emerald-50 text-emerald-600 rounded-xl"><TrendingUp size={24} /></div>
                 </div>
-                <div onClick={() => goTab('Stok Keluar')} className={`p-5 rounded-xl border shadow-sm flex items-center justify-between cursor-pointer hover:border-rose-400 ${card}`}>
-                  <div><p className="text-xs font-semibold text-slate-400 uppercase">Barang Keluar</p><h3 className="text-2xl font-bold mt-1 text-rose-600">{filteredKeluar.length} Trx</h3></div>
-                  <div className="p-3 bg-rose-50 text-rose-600 rounded-xl"><TrendingDown size={24} /></div>
+                <div onClick={() => goTab('Stok Keluar')} className={`p-3 sm:p-5 rounded-xl border shadow-sm flex items-center justify-between gap-2 cursor-pointer hover:border-rose-400 ${card}`}>
+                  <div><p className="text-xs font-semibold text-slate-400 uppercase">Barang Keluar</p><h3 className="text-lg sm:text-2xl font-bold mt-1 text-rose-600">{keluarP.length} Trx</h3></div>
+                  <div className="hidden sm:block p-3 bg-rose-50 text-rose-600 rounded-xl"><TrendingDown size={24} /></div>
                 </div>
-                <div onClick={() => goTab('Form & Cetak PO')} className={`p-5 rounded-xl border shadow-sm flex items-center justify-between cursor-pointer hover:border-yellow-500 ${card}`}>
-                  <div><p className="text-xs font-semibold text-slate-400 uppercase">Wajib Order (PO)</p><h3 className="text-2xl font-bold mt-1 text-amber-500">{poNeededItems.length} Item</h3></div>
-                  <div className="p-3 bg-amber-50 text-amber-600 rounded-xl"><ShoppingCart size={24} /></div>
-                </div>
-              </div>
-
-              <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-                <div onClick={() => goTab('Rekap Stok')} className={`p-5 rounded-xl border shadow-sm flex items-center justify-between cursor-pointer hover:border-blue-400 ${card}`}>
-                  <div><p className="text-xs font-semibold text-slate-400 uppercase">Rekap Stok (Total Persediaan)</p><h3 className="text-2xl font-bold mt-1 text-blue-600">{dashRekap.stok} Unit</h3><p className="text-[11px] text-slate-400 mt-1">Masuk {dashRekap.masuk} • Keluar {dashRekap.keluar} • Habis {dashRekap.habis} item</p></div>
-                  <div className="p-3 bg-blue-50 text-blue-600 rounded-xl"><BarChart3 size={24} /></div>
-                </div>
-                <div onClick={() => goTab('Stok Opname')} className={`p-5 rounded-xl border shadow-sm flex items-center justify-between cursor-pointer hover:border-emerald-400 ${card}`}>
-                  <div><p className="text-xs font-semibold text-slate-400 uppercase">Stok Opname Terakhir</p><h3 className="text-2xl font-bold mt-1 text-emerald-600">{lastOpname ? fmtDate(lastOpname.tanggal) : 'Belum ada'}</h3><p className="text-[11px] text-slate-400 mt-1">{lastOpname ? `${(lastOpname.items || []).length} barang disesuaikan • total ${riwayatOpname.length}x opname` : 'Belum pernah opname'}</p></div>
-                  <div className="p-3 bg-emerald-50 text-emerald-600 rounded-xl"><ClipboardList size={24} /></div>
-                </div>
-                <div onClick={() => goTab('Arsip Database PO')} className={`p-5 rounded-xl border shadow-sm flex items-center justify-between cursor-pointer hover:border-yellow-500 ${card}`}>
-                  <div><p className="text-xs font-semibold text-slate-400 uppercase">PO Tersimpan (Arsip)</p><h3 className="text-2xl font-bold mt-1 text-amber-500">{riwayatPo.length} PO</h3><p className="text-[11px] text-slate-400 mt-1">{lastPo ? `PO terakhir: ${lastPo.noPo}` : 'Belum ada PO tersimpan'}</p></div>
-                  <div className="p-3 bg-amber-50 text-amber-600 rounded-xl"><History size={24} /></div>
-                </div>
-                <div onClick={() => goTab('Form & Cetak PO')} className={`p-5 rounded-xl border shadow-sm flex items-center justify-between cursor-pointer hover:border-rose-400 ${card}`}>
-                  <div><p className="text-xs font-semibold text-slate-400 uppercase">Form &amp; Cetak PO</p><h3 className="text-2xl font-bold mt-1 text-rose-600">Buat PO Baru</h3><p className="text-[11px] text-slate-400 mt-1">Nomor PO diketik manual pada lembar PO</p></div>
-                  <div className="p-3 bg-rose-50 text-rose-600 rounded-xl"><Printer size={24} /></div>
+                <div onClick={() => goTab('Form & Cetak PO')} className={`p-3 sm:p-5 rounded-xl border shadow-sm flex items-center justify-between gap-2 cursor-pointer hover:border-yellow-500 ${card}`}>
+                  <div><p className="text-xs font-semibold text-slate-400 uppercase">Wajib Order (PO)</p><h3 className="text-lg sm:text-2xl font-bold mt-1 text-amber-500">{periodActive ? poNeededP.length : poNeededItems.length} Item</h3>{periodActive && <p className="text-[11px] text-slate-400 mt-1">dari {materialAktif.length} barang bergerak pada periode</p>}</div>
+                  <div className="hidden sm:block p-3 bg-amber-50 text-amber-600 rounded-xl"><ShoppingCart size={24} /></div>
                 </div>
               </div>
 
-              <div className={`rounded-xl shadow-sm border overflow-x-auto ${card}`}>
-                <div className="p-4 border-b flex items-center justify-between bg-amber-50">
-                  <h3 className="font-bold text-xs uppercase tracking-wider text-amber-700 flex items-center gap-2"><AlertTriangle size={16} /> Perhatian: Material Mencapai Stok Minimum & Wajib Segera Di-Order (PO)</h3>
-                  <button onClick={() => goTab('Form & Cetak PO')} className="text-xs bg-yellow-500 text-slate-950 font-bold px-3 py-1 rounded-lg">Buka Form PO ➔</button>
+              <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
+                <div onClick={() => goTab('Rekap Stok')} className={`p-3 sm:p-5 rounded-xl border shadow-sm flex items-center justify-between gap-2 cursor-pointer hover:border-blue-400 ${card}`}>
+                  <div><p className="text-xs font-semibold text-slate-400 uppercase">Rekap Stok (Total Persediaan)</p><h3 className="text-lg sm:text-2xl font-bold mt-1 text-blue-600">{dashRekap.stok} Unit</h3><p className="text-[11px] text-slate-400 mt-1">Masuk {dashRekap.masuk} • Keluar {dashRekap.keluar} • Habis {dashRekap.habis} item{periodActive ? ` (dari ${materialAktif.length} barang bergerak)` : ''}</p></div>
+                  <div className="hidden sm:block p-3 bg-blue-50 text-blue-600 rounded-xl"><BarChart3 size={24} /></div>
                 </div>
-                <table className="w-full min-w-[960px] text-left text-sm">
-                  <thead className={`border-b font-semibold leading-tight ${thead}`}>
-                    <tr><th className="p-3">KODE</th><th className="p-3">MATERIAL<br />NUMBER</th><th className="p-3">PART UNIT</th><th className="p-3">NAMA BARANG</th><th className="p-3">LOKASI<br />RAK</th><th className="p-3 text-center">STOK<br />SAAT INI</th><th className="p-3 text-center">BATAS<br />MINIMUM</th><th className="p-3 text-center">STATUS</th></tr>
-                  </thead>
-                  <tbody className={`divide-y ${divide}`}>
-                    {poNeededItems.length === 0 ? (
-                      <tr><td colSpan="8" className="p-6 text-center text-slate-400">Semua stok barang di atas batas minimum.</td></tr>
-                    ) : poNeededItems.slice(0, 10).map((item) => {
-                      const qn = Number(item.Qty || 0);
-                      return (
-                        <tr key={item.id} className={hoverRow}>
-                          <td className="p-3 text-center align-middle font-mono font-bold">{item.Kode || '-'}</td>
-                          <td className="p-3 text-center align-middle max-w-[9rem] break-words">{item['Nomor Barang'] || '-'}</td>
-                          <td className="p-3 text-center align-middle max-w-[8rem] break-words">{item['Part Unit'] || '-'}</td>
-                          <td className="p-3 text-left align-middle font-semibold max-w-[16rem] break-words">{item['Nama Barang'] || '-'}</td>
-                          <td className="p-3 text-center align-middle"><span className="bg-yellow-100 text-yellow-800 px-2 py-0.5 rounded font-bold text-[10px]">{item.Lokasi || 'Rak A1'}</span></td>
-                          <td className="p-3 text-center align-middle font-bold text-rose-600 text-sm">{qn}</td>
-                          <td className="p-3 text-center align-middle font-bold text-blue-600">{item.MinQty ?? 5}</td>
-                          <td className="p-3 text-center align-middle">{qn === 0 ? <span className="bg-rose-100 text-rose-800 px-2 py-1 rounded font-bold text-[10px]">Habis</span> : <span className="bg-amber-100 text-amber-800 px-2 py-1 rounded font-bold text-[10px]">Di Bawah Min</span>}</td>
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                </table>
-                {poNeededItems.length > 10 && <div className="p-3 text-center text-[11px] text-slate-400">+ {poNeededItems.length - 10} barang lainnya di Form PO</div>}
+                <div onClick={() => goTab('Stok Opname')} className={`p-3 sm:p-5 rounded-xl border shadow-sm flex items-center justify-between gap-2 cursor-pointer hover:border-emerald-400 ${card}`}>
+                  <div><p className="text-xs font-semibold text-slate-400 uppercase">Stok Opname Terakhir</p><h3 className="text-lg sm:text-2xl font-bold mt-1 text-emerald-600">{lastOpnameP ? fmtDate(lastOpnameP.tanggal) : (periodActive ? 'Tidak ada' : 'Belum ada')}</h3><p className="text-[11px] text-slate-400 mt-1">{lastOpnameP ? `${(lastOpnameP.items || []).length} barang disesuaikan • total ${opnameP.length}x opname` : (periodActive ? 'Tidak ada opname pada periode ini' : 'Belum pernah opname')}</p></div>
+                  <div className="hidden sm:block p-3 bg-emerald-50 text-emerald-600 rounded-xl"><ClipboardList size={24} /></div>
+                </div>
+                <div onClick={() => goTab('Arsip Database PO')} className={`p-3 sm:p-5 rounded-xl border shadow-sm flex items-center justify-between gap-2 cursor-pointer hover:border-yellow-500 ${card}`}>
+                  <div><p className="text-xs font-semibold text-slate-400 uppercase">PO Tersimpan (Arsip)</p><h3 className="text-lg sm:text-2xl font-bold mt-1 text-amber-500">{poP.length} PO</h3><p className="text-[11px] text-slate-400 mt-1">{lastPoP ? `PO terakhir: ${lastPoP.noPo}` : (periodActive ? 'Tidak ada PO pada periode ini' : 'Belum ada PO tersimpan')}</p></div>
+                  <div className="hidden sm:block p-3 bg-amber-50 text-amber-600 rounded-xl"><History size={24} /></div>
+                </div>
+                <div onClick={() => { setKurangKode(null); setKurangQ(''); setKurangOpen(true); }} className={`p-3 sm:p-5 rounded-xl border shadow-sm flex items-center justify-between gap-2 cursor-pointer hover:border-rose-400 ${card}`}>
+                  <div><p className="text-xs font-semibold text-slate-400 uppercase">PO Kurang Supply</p><h3 className="text-lg sm:text-2xl font-bold mt-1 text-rose-600">{kurangSupply.list.length} Barang</h3><p className="text-[11px] text-slate-400 mt-1">{kurangSupply.lines.length} PO belum lengkap • klik untuk detail</p></div>
+                  <div className="hidden sm:block p-3 bg-rose-50 text-rose-600 rounded-xl"><AlertTriangle size={24} /></div>
+                </div>
+              </div>
+
+              {/* TREN PENGGUNAAN SPAREPART */}
+              <div className={`rounded-xl shadow-sm border p-3 sm:p-4 ${card}`}>
+                <div className="flex flex-wrap items-start justify-between gap-2 mb-3">
+                  <div>
+                    <h3 className="font-bold text-sm">Tren Penggunaan Sparepart per Bulan</h3>
+                    <p className="text-[11px] text-slate-400">Dari transaksi barang keluar • {trenData.total} transaksi dalam {tren.months} bulan {periodActive ? `sampai ${NAMA_BULAN[periodEnd.m - 1]} ${periodEnd.y}` : 'terakhir'}</p>
+                  </div>
+                  <div className="flex flex-wrap gap-2">
+                    <select value={tren.by} onChange={(e) => setTren((t) => ({ ...t, by: e.target.value }))} className={`${selectClass} !py-1.5 text-xs`}>
+                      <option value="partunit">Kelompok alat (Part Unit)</option><option value="jenis">Jenis barang</option>
+                    </select>
+                    <select value={tren.metric} onChange={(e) => setTren((t) => ({ ...t, metric: e.target.value }))} className={`${selectClass} !py-1.5 text-xs`}>
+                      <option value="trx">Jumlah transaksi</option><option value="qty">Total qty</option>
+                    </select>
+                    <select value={tren.months} onChange={(e) => setTren((t) => ({ ...t, months: Number(e.target.value) }))} className={`${selectClass} !py-1.5 text-xs`}>
+                      <option value={6}>6 bulan</option><option value={12}>12 bulan</option>
+                    </select>
+                  </div>
+                </div>
+                {trenData.total === 0 ? (
+                  <p className="text-xs text-slate-400 py-10 text-center">Belum ada transaksi barang keluar pada rentang ini.</p>
+                ) : (
+                  <>
+                    <div className="overflow-x-auto">
+                      <div className="flex items-end gap-2 sm:gap-4 h-48 px-1" style={{ minWidth: `${tren.months * 44}px` }}>
+                        {trenData.cols.map((c) => (
+                          <div key={c.mo} className="flex-1 flex flex-col items-center justify-end h-full">
+                            <span className="text-[10px] font-bold mb-1">{c.sum ? c.sum.toLocaleString('id-ID') : ''}</span>
+                            <div className="w-full flex flex-col-reverse rounded-t overflow-hidden" style={{ height: `${(c.sum / trenData.max) * 82}%` }}>
+                              {c.seg.map((sg, i) => sg.v > 0 && <div key={sg.g} title={`${sg.g}: ${sg.v.toLocaleString('id-ID')}`} style={{ height: `${(sg.v / c.sum) * 100}%`, background: trenColor(sg.g, i) }} />)}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                      <div className="flex gap-2 sm:gap-4 px-1 mt-1" style={{ minWidth: `${tren.months * 44}px` }}>
+                        {trenData.cols.map((c) => <div key={c.mo} className="flex-1 text-center text-[10px] text-slate-400">{blnLabel(c.mo)}</div>)}
+                      </div>
+                    </div>
+                    <div className="flex flex-wrap gap-x-3 gap-y-1 mt-3 text-[11px]">
+                      {trenData.groups.map((g, i) => <span key={g} className="flex items-center gap-1.5"><i className="w-2.5 h-2.5 rounded-sm inline-block" style={{ background: trenColor(g, i) }} />{g}</span>)}
+                    </div>
+                    {tren.metric === 'qty' && <p className="text-[10px] text-slate-400 mt-2">Total qty menjumlahkan semua satuan (Liter, Ea, dll.). Pilih "Jumlah transaksi" untuk perbandingan yang adil antar jenis.</p>}
+                  </>
+                )}
               </div>
 
               <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-                {[
-                  { title: 'Barang Masuk Terbaru', rows: filteredMasuk.slice(0, 5), color: 'text-emerald-600', sign: '+', tab: 'Stok Masuk', date: (r) => r.Tanggal, name: (r) => r.Description },
-                  { title: 'Barang Keluar Terbaru', rows: filteredKeluar.slice(0, 5), color: 'text-rose-600', sign: '-', tab: 'Stok Keluar', date: (r) => r['Doc.Date'], name: (r) => r['Nama Barang'] },
-                ].map((b) => (
-                  <div key={b.title} className={`rounded-xl shadow-sm border overflow-x-auto ${card}`}>
-                    <div className="p-3.5 border-b flex justify-between items-center"><h3 className="font-bold text-xs uppercase tracking-wider">{b.title}</h3><button onClick={() => goTab(b.tab)} className="text-[11px] text-blue-500 font-semibold">Lihat semua ➔</button></div>
-                    <table className="w-full text-xs"><tbody className={`divide-y ${divide}`}>
-                      {b.rows.length === 0 ? <tr><td className="p-4 text-center text-slate-400">Belum ada transaksi.</td></tr> : b.rows.map((r) => (
-                        <tr key={r.id}><td className="p-3 whitespace-nowrap">{fmtDate(b.date(r))}</td><td className="p-3 font-mono">{r.Kode}</td><td className="p-3 truncate max-w-[180px]">{b.name(r)}</td><td className={`p-3 text-right font-bold ${b.color}`}>{b.sign}{r.Qty}</td></tr>
+                <div className={`rounded-xl shadow-sm border p-3 sm:p-4 ${card}`}>
+                  <h3 className="font-bold text-sm mb-3">Barang Paling Sering Keluar <span className="text-[11px] font-normal text-slate-400">({periodActive ? periodLabel : `${tren.months} bulan`})</span></h3>
+                  {trenData.topBarang.length === 0 ? <p className="text-xs text-slate-400 py-6 text-center">Belum ada data.</p> : (
+                    <div className="space-y-2.5">
+                      {trenData.topBarang.map((b) => (
+                        <div key={b.kode} className="text-xs">
+                          <div className="flex justify-between gap-2"><span className="truncate"><b className="font-mono">{b.kode}</b> {b.nama}</span><span className="shrink-0 font-bold">{b.trx}x • {b.qty.toLocaleString('id-ID')} {b.satuan}</span></div>
+                          <div className="h-1.5 rounded bg-slate-100 mt-1"><div className="h-1.5 rounded bg-blue-500" style={{ width: `${(b.trx / trenData.topBarang[0].trx) * 100}%` }} /></div>
+                        </div>
                       ))}
-                    </tbody></table>
-                  </div>
-                ))}
+                    </div>
+                  )}
+                </div>
+                <div className={`rounded-xl shadow-sm border p-3 sm:p-4 ${card}`}>
+                  <h3 className="font-bold text-sm mb-3">Unit Alat Paling Banyak Memakai Sparepart <span className="text-[11px] font-normal text-slate-400">({periodActive ? periodLabel : `${tren.months} bulan`})</span></h3>
+                  {trenData.topUnit.length === 0 ? <p className="text-xs text-slate-400 py-6 text-center">Belum ada data.</p> : (
+                    <div className="space-y-2.5">
+                      {trenData.topUnit.map(([u, n]) => (
+                        <div key={u} className="text-xs">
+                          <div className="flex justify-between gap-2"><span className="truncate font-semibold">{u}</span><span className="shrink-0 font-bold">{n} transaksi</span></div>
+                          <div className="h-1.5 rounded bg-slate-100 mt-1"><div className="h-1.5 rounded bg-emerald-500" style={{ width: `${(n / trenData.topUnit[0][1]) * 100}%` }} /></div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
               </div>
+
+              {/* JENDELA PO KURANG SUPPLY: daftar barang (1 kode 1 baris) -> klik -> daftar PO */}
+              {kurangOpen && (() => {
+                const sel = kurangKode ? kurangSupply.list.find((g) => g.kode === kurangKode) : null;
+                const qq = kurangQ.trim().toLowerCase();
+                const list = kurangSupply.list.filter((g) => !qq || String(g.kode).toLowerCase().includes(qq) || String(g.nama).toLowerCase().includes(qq));
+                return (
+                  <div className="no-print fixed inset-0 z-[55] bg-black/50 flex items-end sm:items-center justify-center sm:p-4" onClick={() => setKurangOpen(false)}>
+                    <div className={`w-full sm:max-w-2xl max-h-[88vh] flex flex-col rounded-t-2xl sm:rounded-2xl shadow-2xl ${darkMode ? 'bg-slate-900 text-slate-100' : 'bg-white text-slate-900'}`} onClick={(e) => e.stopPropagation()}>
+                      <div className="p-4 border-b flex items-center justify-between gap-2">
+                        <div className="min-w-0">
+                          {sel && <button onClick={() => setKurangKode(null)} className="text-xs text-blue-600 font-semibold mb-1">← Kembali ke daftar barang</button>}
+                          <h3 className="font-bold text-sm truncate">{sel ? `${sel.kode} • ${sel.nama}` : 'PO Kurang Supply'}</h3>
+                          <p className="text-[11px] text-slate-400">{sel ? `${sel.lines.length} PO belum lengkap` : `${kurangSupply.list.length} barang • ${kurangSupply.lines.length} PO belum lengkap`}</p>
+                        </div>
+                        <div className="flex items-center gap-2 shrink-0">
+                          {!sel && <button onClick={downloadKurang} className="bg-emerald-600 text-white px-3 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1"><Download size={13} /> Excel</button>}
+                          <button onClick={() => setKurangOpen(false)} className="p-1.5 rounded-lg hover:bg-slate-100 text-slate-500" aria-label="Tutup"><X size={18} /></button>
+                        </div>
+                      </div>
+                      {!sel && (
+                        <div className="p-3 border-b"><input value={kurangQ} onChange={(e) => setKurangQ(e.target.value)} placeholder="Cari kode atau nama barang..." className={inputClass} /></div>
+                      )}
+                      <div className="overflow-y-auto flex-1 divide-y">
+                        {!sel && (list.length === 0
+                          ? <p className="p-8 text-center text-xs text-slate-400">{kurangSupply.list.length === 0 ? 'Tidak ada PO yang kurang supply.' : 'Tidak ada barang yang cocok.'}</p>
+                          : list.map((g) => (
+                            <button key={g.kode} onClick={() => setKurangKode(g.kode)} className="w-full text-left px-4 py-3 flex items-center justify-between gap-3 hover:bg-slate-50 hover:text-slate-900">
+                              <div className="min-w-0"><p className="font-mono font-bold text-sm text-blue-600">{g.kode}</p><p className="text-xs truncate">{g.nama || '-'}</p></div>
+                              <div className="text-right shrink-0"><p className="text-sm font-bold text-rose-600">{g.total.toLocaleString('id-ID')} {g.satuan}</p><p className="text-[11px] text-slate-400">{g.lines.length} PO ›</p></div>
+                            </button>
+                          )))}
+                        {sel && sel.lines.map((l) => (
+                          <div key={l.id} className="px-4 py-3 text-xs space-y-1">
+                            <div className="flex items-center justify-between gap-2"><b className="text-sm">{l.po || '(tanpa No. PO)'}</b><span className="font-bold text-rose-600">kurang {l.kurang.toLocaleString('id-ID')} {sel.satuan}</span></div>
+                            <p className="text-slate-500">{fmtDate(l.tanggal)}{l.unit ? ` • ${l.unit}` : ''}{l.suratJalan ? ` • SJ ${l.suratJalan}` : ''}</p>
+                            {l.ket && <p className="text-slate-400">{l.ket}</p>}
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+                );
+              })()}
             </div>
           )}
 
@@ -1785,7 +2109,7 @@ export default function App() {
               <div className={`rounded-xl shadow-sm border overflow-x-auto ${card}`}>
                 <table className="w-full min-w-[1050px] text-left text-sm">
                   <thead className={`border-b font-semibold leading-tight ${thead}`}>
-                    <tr>{TH('master','kode',<>KODE /<br />BARCODE</>,'p-3')}{TH('master','nama','NAMA BARANG','p-3')}{TH('master','nomor',<>MATERIAL<br />NUMBER</>,'p-3')}{TH('master','part','PART UNIT','p-3')}{TH('master','merk','MERK','p-3')}{TH('master','base',<>BASE UNIT<br />OF MEASURE</>,'p-3')}{TH('master','satuan','SATUAN','p-3 text-center')}{TH('master','lokasi','LOKASI','p-3')}{TH('master','min','MIN','p-3 text-center')}{TH('master','stok','STOK','p-3 text-center')}{TH('master','status',<>STATUS<br />PO</>,'p-3 text-center')}<th className="p-3 text-center">AKSI</th></tr>
+                    <tr>{TH('master','kode',<>KODE /<br />BARCODE</>,'p-3')}{TH('master','nama','NAMA BARANG','p-3')}{TH('master','nomor',<>MATERIAL<br />NUMBER</>,'p-3')}{TH('master','part','PART UNIT','p-3')}{TH('master','merk','MERK','p-3')}{TH('master','base','KETERANGAN','p-3')}{TH('master','satuan','SATUAN','p-3 text-center')}{TH('master','lokasi','LOKASI','p-3')}{TH('master','min','MIN','p-3 text-center')}{TH('master','stok','STOK','p-3 text-center')}{TH('master','status',<>STATUS<br />PO</>,'p-3 text-center')}<th className="p-3 text-center">AKSI</th></tr>
                   </thead>
                   <tbody className={`divide-y ${divide}`}>
                     {masterRows.length === 0 ? (
@@ -2171,6 +2495,49 @@ export default function App() {
             <div className="space-y-4">
               {dataRangeBar('Laporan hanya memuat transaksi dalam rentang ini.')}
               {PeriodFilter()}
+              <div className={`p-4 rounded-xl border shadow-sm space-y-3 ${card}`}>
+                <div>
+                  <h3 className="font-bold text-sm">Laporan Pemakaian Barang (pilih rentang tanggal)</h3>
+                  <p className="text-xs text-slate-400">Ambil transaksi barang keluar pada rentang tanggal, lalu unduh ke Excel (ringkasan per barang, per unit, dan detail). Isi Kode untuk satu atau beberapa barang; kosongkan Kode dan Nama untuk melihat semua barang di Master.</p>
+                </div>
+                <div className="flex flex-wrap items-end gap-3 text-xs">
+                  <Field label="Dari tanggal"><input type="date" value={rpt.from} onChange={(e) => setRptField('from', e.target.value)} className={selectClass} /></Field>
+                  <Field label="Sampai tanggal"><input type="date" value={rpt.to} onChange={(e) => setRptField('to', e.target.value)} className={selectClass} /></Field>
+                  <Field label="Kode barang (boleh lebih dari satu, pisahkan koma)">
+                    <input type="text" list="kode-master-list" value={rpt.kode} onChange={(e) => setRptField('kode', e.target.value)} placeholder="mis. U045" className={`${selectClass} w-48 font-mono`} />
+                    <datalist id="kode-master-list">{kodeOptions}</datalist>
+                  </Field>
+                  <Field label={rptKodeInfo.active ? 'Nama barang (otomatis dari kode)' : 'Nama barang mengandung (pisahkan koma)'}>
+                    <input type="text" readOnly={rptKodeInfo.active} value={rptKodeInfo.active ? rptKodeInfo.names : rpt.kw} onChange={(e) => setRptField('kw', e.target.value)} placeholder="kosong = semua barang; atau ketik: OIL, GREASE" className={`${selectClass} w-72 ${rptKodeInfo.active ? 'bg-slate-100' : ''}`} />
+                    {rptKodeInfo.missing.length > 0 && <span className="block text-[11px] text-rose-600 mt-1">Kode tidak ada di Master: {rptKodeInfo.missing.join(', ')}</span>}
+                  </Field>
+                  <label className="flex items-center gap-1.5 pb-2 font-semibold"><input type="checkbox" checked={rpt.cair} onChange={(e) => setRptField('cair', e.target.checked)} /> Hanya satuan cairan (Liter, Drum, dll.)</label>
+                </div>
+                <div className="flex flex-wrap items-center gap-2 text-xs">
+                  <button onClick={() => setRptBulan(0)} className="px-3 py-1.5 border rounded-lg font-semibold">Bulan ini</button>
+                  <button onClick={() => setRptBulan(-1)} className="px-3 py-1.5 border rounded-lg font-semibold">Bulan lalu</button>
+                  <button disabled={rptBusy} onClick={runPemakaian} className="bg-blue-600 disabled:opacity-60 text-white px-4 py-2 rounded-lg font-semibold">{rptBusy ? 'Mengambil data...' : 'Tampilkan'}</button>
+                  <button disabled={!rptSummary || rptSummary.detail.length === 0} onClick={downloadPemakaian} className="bg-emerald-600 disabled:opacity-40 text-white px-4 py-2 rounded-lg font-semibold flex items-center gap-1.5"><Download size={14} /> Unduh Excel</button>
+                </div>
+                {rptSummary && rptSummary.detail.length > 0 && (
+                  <div className="space-y-2">
+                    <div className="flex flex-wrap gap-2 text-xs">
+                      <span className="px-2.5 py-1 rounded-full bg-slate-100 text-slate-700 font-semibold">{rptSummary.detail.length} transaksi, {rptSummary.barang.length} barang</span>
+                      {rptSummary.perSatuan.map(([sat, qty]) => <span key={sat} className="px-2.5 py-1 rounded-full bg-emerald-100 text-emerald-800 font-bold">{sat}: {qty.toLocaleString('id-ID')}</span>)}
+                    </div>
+                    <div className="overflow-x-auto max-h-72 overflow-y-auto border rounded-lg">
+                      <table className="w-full min-w-[640px] text-left text-xs">
+                        <thead className={`border-b font-semibold ${thead}`}><tr><th className="p-2.5">KODE</th><th className="p-2.5">NAMA BARANG</th><th className="p-2.5">SATUAN</th><th className="p-2.5 text-right">STOK</th><th className="p-2.5 text-right">TRANSAKSI</th><th className="p-2.5 text-right">TOTAL QTY</th></tr></thead>
+                        <tbody className={`divide-y ${divide}`}>
+                          {rptSummary.barang.map((b) => (
+                            <tr key={b.Kode}><td className="p-2.5 font-mono font-bold">{b.Kode}</td><td className="p-2.5">{b['Nama Barang']}</td><td className="p-2.5">{b.Satuan}</td><td className="p-2.5 text-right">{Number(b['Stok Saat Ini']).toLocaleString('id-ID')}</td><td className="p-2.5 text-right">{b['Jumlah Transaksi']}</td><td className="p-2.5 text-right font-bold">{b['Total Qty'].toLocaleString('id-ID')}</td></tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                )}
+              </div>
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 {[
                   { t: 'Laporan Stok Seluruh Barang', d: `${dataMaterial.length} item`, f: () => downloadSheets('Laporan_Stok.xlsx', { MATERIAL: dataMaterial }) },
@@ -2317,7 +2684,7 @@ export default function App() {
             </div>
             <Field label="Merk"><input type="text" className={inputClass} value={formMaterial.merk} onChange={(e) => setFormMaterial({ ...formMaterial, merk: e.target.value })} placeholder="Contoh: Komatsu / Pioneer / Bosch" /></Field>
             <div className="grid grid-cols-2 gap-2">
-              <Field label="Base Unit of Measure"><input type="text" className={inputClass} value={formMaterial.baseUnit} onChange={(e) => setFormMaterial({ ...formMaterial, baseUnit: e.target.value })} placeholder="Bolt roda belakang" /></Field>
+              <Field label="Keterangan"><input type="text" className={inputClass} value={formMaterial.baseUnit} onChange={(e) => setFormMaterial({ ...formMaterial, baseUnit: e.target.value })} placeholder="Bolt roda belakang" /></Field>
               <Field label="Satuan (Ea, Assy, Kit, Set)"><input type="text" list="satuan-list" className={inputClass} value={formMaterial.satuan} onChange={(e) => setFormMaterial({ ...formMaterial, satuan: e.target.value })} placeholder="Ea" /></Field>
             </div>
             <div className="grid grid-cols-3 gap-2">
