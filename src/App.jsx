@@ -2334,9 +2334,9 @@ export default function App() {
 
                 {/* Tanda tangan: kiri sejajar kolom URAIAN (9 mm), kanan sejajar kolom KETERANGAN (151 mm) */}
                 <div className="text-xs font-semibold relative" style={{ marginTop: '2mm', height: '26mm', width: '190mm' }}>
-                  {[['DIKETAHUI OLEH,', 'ttd1', '9mm', '60mm', 'left'], ['DIKETAHUI OLEH,', 'ttd2', '70mm', '50mm', 'center'], ['DIBUAT OLEH,', 'ttd3', '151mm', '39mm', 'left']].map(([label, k, lf, w, al], ci) => (
+                  {[['DIKETAHUI OLEH,', 'ttd1', '9mm', '27.6mm', 'left'], ['DIKETAHUI OLEH,', 'ttd2', '70mm', '50mm', 'center'], ['DIBUAT OLEH,', 'ttd3', '151mm', '22.3mm', 'left']].map(([label, k, lf, w, al], ci) => (
                     <div key={k} className="absolute top-0" style={{ left: lf, width: w, textAlign: al }}>
-                      <div className="po-static" style={{ height: '4mm', lineHeight: '4mm' }}>{label}</div>
+                      <div className="po-static" style={{ height: '4mm', lineHeight: '4mm', whiteSpace: 'nowrap' }}>{label}</div>
                       <div style={{ height: '13mm' }} />
                       <input data-sig={`0-${ci}`} onKeyDown={(e) => sigNav(e, 0, ci)} className="po-input po-ttd-name po-line border-b border-dotted font-bold" placeholder="Nama" style={{ height: '4.5mm', fontSize: '8.5pt', textAlign: 'center' }} value={poHeader[k + 'Nama']} onChange={(e) => setPoHeader({ ...poHeader, [k + 'Nama']: e.target.value })} />
                       <input data-sig={`1-${ci}`} onKeyDown={(e) => sigNav(e, 1, ci)} className="po-input" placeholder="Jabatan" style={{ height: '4mm', fontSize: '8pt', fontWeight: 600, textAlign: 'center' }} value={poHeader[k + 'Jabatan']} onChange={(e) => setPoHeader({ ...poHeader, [k + 'Jabatan']: e.target.value })} />
