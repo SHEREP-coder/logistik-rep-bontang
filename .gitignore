@@ -22,3 +22,10 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+
+# Kunci dan konfigurasi lokal
+.env
+.env.*
+
+# Data inventory tidak boleh dipublikasikan
+public/*.xlsx

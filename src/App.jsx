@@ -7,39 +7,11 @@ import {
   Printer, History, LogOut, Pencil, Upload, Lock, Save, FilePlus2, Filter
 } from 'lucide-react';
 
-import { initializeApp } from 'firebase/app';
 import {
-  initializeFirestore, persistentLocalCache, persistentMultipleTabManager,
-  collection, doc, getDoc, setDoc, addDoc, updateDoc, deleteDoc, onSnapshot,
-  writeBatch, runTransaction, serverTimestamp, query, where, getCountFromServer, getDocsFromServer, limit
-} from 'firebase/firestore';
-import {
-  getAuth, onAuthStateChanged, signInWithEmailAndPassword, signOut,
-  createUserWithEmailAndPassword, updatePassword, reauthenticateWithCredential,
-  EmailAuthProvider
-} from 'firebase/auth';
-
-/* ============================== FIREBASE ============================== */
-const firebaseConfig = {
-  apiKey: "AIzaSyAuetnYQDspE1IFbOcFttgSJMq3FOvmft0",
-  authDomain: "logistik-rep-bontang.firebaseapp.com",
-  projectId: "logistik-rep-bontang",
-  storageBucket: "logistik-rep-bontang.firebasestorage.app",
-  messagingSenderId: "26293450683",
-  appId: "1:26293450683:web:8d6458695a511b75ea369e",
-  measurementId: "G-E72GBTQ59N"
-};
-
-const app = initializeApp(firebaseConfig);
-// Cache lokal: data tidak dibaca ulang penuh setiap buka halaman (hemat kuota baca Firestore)
-const db = initializeFirestore(app, {
-  localCache: persistentLocalCache({ tabManager: persistentMultipleTabManager() })
-});
-const auth = getAuth(app);
-
-// App kedua khusus untuk membuat akun pengguna baru tanpa mengeluarkan Admin yang sedang login
-const secondaryApp = initializeApp(firebaseConfig, 'secondary');
-const secondaryAuth = getAuth(secondaryApp);
+  supabase, supabaseSignup, chunkArr, pgMessage,
+  materialToRow, masukToRow, keluarToRow, loadMaterial, loadMasuk, loadKeluar, loadPo, loadOpname, loadUsers,
+  poHeaderToRow
+} from './supabase';
 
 /* ============================== HELPER ============================== */
 const ROWS = 20;
@@ -121,10 +93,20 @@ const usernameToEmail = (u) => {
   return s.includes('@') ? s : `${s}@logistik-rep.local`;
 };
 
-const safeId = (kode) => {
-  let id = String(kode).trim().replace(/\//g, '_');
-  if (id === '.' || id === '..' || /^__.*__$/.test(id)) id = 'K_' + id;
-  return id.slice(0, 500);
+const safeId = (kode) => String(kode).trim();
+
+// Peta nama kolom data lama -> kolom database (dipakai saat melengkapi data hasil impor)
+const MASUK_COLS = { 'Material Number': 'material_number', 'No. PO': 'no_po', 'No. Surat Jalan': 'no_surat_jalan', Satuan: 'satuan', 'Kekurangan Supply': 'kekurangan_supply', Keterangan: 'keterangan' };
+const KELUAR_COLS = { 'Nomor Barang': 'nomor_barang', 'No. WO': 'no_wo', HM_KM: 'hm_km', Keterangan: 'keterangan' };
+const MATERIAL_COLS = { Satuan: 'satuan', 'Part Unit': 'part_unit', 'Base Unit of Measure': 'base_unit' };
+const colMap = (obj, map) => Object.fromEntries(Object.entries(obj).filter(([k]) => map[k]).map(([k, v]) => [map[k], map[k] === 'kekurangan_supply' ? (Number.isFinite(Number(v)) ? Number(v) : 0) : v]));
+// Jalankan banyak permintaan secara paralel per kelompok kecil; berhenti bila ada yang gagal
+const runPar = async (items, fn, size = 20) => {
+  for (const part of chunkArr(items, size)) {
+    const res = await Promise.all(part.map(fn));
+    const bad = res.find((r) => r && r.error);
+    if (bad) throw bad.error;
+  }
 };
 const clean = (obj) => Object.fromEntries(Object.entries(obj).filter(([, v]) => v !== undefined));
 const pad2 = (n) => String(n).padStart(2, '0');
@@ -164,7 +146,7 @@ const newPoHeader = () => ({ noPo: '', equipment: '', kodeAlat: '', lokasi: 'Bon
 // Tanggal PO: 13-Nov-2026
 const poDateText = (iso) => { const p = dateParts(iso); return p ? `${String(p.d).padStart(2, '0')}-${MONTHS_ID[p.m - 1]}-${p.y}` : ''; };
 const poNumberValue = (s) => { const m = String(s || '').match(/(\d+)\s*$/); return m ? Number(m[1]) : 0; };
-// Periode 'YYYY-MM' dipakai untuk memuat transaksi per tahun (hemat kuota baca Firestore)
+// Periode 'YYYY-MM' dipakai untuk pengelompokan transaksi per bulan
 const periodeOf = (v) => { const iso = toISODate(v); return iso ? iso.slice(0, 7) : 'Tanpa-Tanggal'; };
 const formatPoNumber = (n) => `A ${String(n).padStart(6, '0')}`;
 
@@ -280,14 +262,14 @@ export default function App() {
   }, [fontSize]);
   const [loadingCloud, setLoadingCloud] = useState(false);
   const [loadingTrx, setLoadingTrx] = useState(false);
-  const [periodeReady, setPeriodeReady] = useState(null); // null=mengecek, true=hemat kuota aktif, false=belum migrasi
-  const [loadFromYear, setLoadFromYear] = useState(String(new Date().getFullYear()));
+  const [periodeReady, setPeriodeReady] = useState(true); // Supabase: tidak ada batas baca, selalu aktif
+  const [loadFromYear, setLoadFromYear] = useState('all');
   const [migrating, setMigrating] = useState(false);
   const [migMsg, setMigMsg] = useState('');
   const [saving, setSaving] = useState(false);
   const [toast, setToast] = useState(null);
 
-  /* ---------- data firestore ---------- */
+  /* ---------- data (Supabase) ---------- */
   const [dataMaterial, setDataMaterial] = useState([]);
   const [dataMasuk, setDataMasuk] = useState([]);
   const [dataKeluar, setDataKeluar] = useState([]);
@@ -350,121 +332,120 @@ export default function App() {
 
   const goTab = (name) => { setActiveTab(name); setPencarian(''); setPage(1); };
 
-  /* ---------- AUTH ---------- */
-  useEffect(() => {
-    const unsub = onAuthStateChanged(auth, async (u) => {
-      if (!u) { setProfile(null); setAuthLoading(false); return; }
-      try {
-        const snap = await getDoc(doc(db, 'users', u.uid));
-        if (snap.exists() && snap.data().status !== 'Nonaktif') {
-          setProfile({ uid: u.uid, email: u.email, ...snap.data() });
-          setAuthError('');
-        } else {
-          setAuthError(snap.exists() ? 'Akun Anda dinonaktifkan. Hubungi Admin.' : 'Akun belum terdaftar di sistem. Hubungi Admin.');
-          await signOut(auth);
-          setProfile(null);
-        }
-      } catch (err) {
-        console.error(err);
-        setAuthError('Gagal membaca profil pengguna. Periksa Firestore Rules.');
-        await signOut(auth);
+  /* ---------- AUTH (Supabase) ---------- */
+  const loadProfile = async (u) => {
+    try {
+      const { data, error } = await supabase.from('profiles').select('*').eq('id', u.id).maybeSingle();
+      if (error) throw error;
+      if (data && data.status !== 'Nonaktif') {
+        setProfile({ uid: u.id, email: u.email, ...data });
+        setAuthError('');
+      } else {
+        setAuthError(data ? 'Akun Anda dinonaktifkan. Hubungi Admin.' : 'Akun belum terdaftar di sistem. Hubungi Admin.');
+        await supabase.auth.signOut();
         setProfile(null);
       }
-      setAuthLoading(false);
+    } catch (err) {
+      console.error(err);
+      setAuthError('Gagal membaca profil pengguna: ' + pgMessage(err));
+      await supabase.auth.signOut();
+      setProfile(null);
+    }
+    setAuthLoading(false);
+  };
+
+  useEffect(() => {
+    let alive = true;
+    supabase.auth.getSession().then(({ data }) => {
+      if (!alive) return;
+      if (data.session?.user) loadProfile(data.session.user);
+      else { setProfile(null); setAuthLoading(false); }
     });
-    return () => unsub();
+    const { data: sub } = supabase.auth.onAuthStateChange((event) => {
+      if (event === 'SIGNED_OUT') { setProfile(null); setAuthLoading(false); }
+    });
+    return () => { alive = false; sub.subscription.unsubscribe(); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const handleLogin = async (username, password) => {
     setAuthBusy(true); setAuthError('');
     try {
-      await signInWithEmailAndPassword(auth, usernameToEmail(username), password);
+      const { data, error } = await supabase.auth.signInWithPassword({ email: usernameToEmail(username), password });
+      if (error) throw error;
+      await loadProfile(data.user);
     } catch (err) {
-      const code = err.code || '';
+      const m = String(err.message || '');
       setAuthError(
-        code.includes('invalid-credential') || code.includes('wrong-password') || code.includes('user-not-found')
-          ? 'Username atau password salah.'
-          : code.includes('too-many-requests') ? 'Terlalu banyak percobaan. Coba lagi beberapa menit lagi.'
-          : code.includes('network') ? 'Tidak ada koneksi internet.'
-          : 'Gagal login: ' + (err.message || code)
+        /invalid login credentials/i.test(m) ? 'Username atau password salah.'
+          : /rate limit|too many/i.test(m) ? 'Terlalu banyak percobaan. Coba lagi beberapa menit lagi.'
+          : /fetch|network/i.test(m) ? 'Tidak ada koneksi internet.'
+          : 'Gagal login: ' + m
       );
     }
     setAuthBusy(false);
   };
 
   const handleLogout = async () => {
-    await signOut(auth);
+    await supabase.auth.signOut();
     setActiveTab('Dashboard');
     setDataMaterial([]); setDataMasuk([]); setDataKeluar([]); setRiwayatPo([]); setRiwayatOpname([]); setDaftarPengguna([]);
     setRiwayatLoaded(false);
-    setPeriodeReady(null);
   };
 
-  /* ---------- LANGGANAN DATA FIRESTORE (realtime) ---------- */
+  /* ---------- MUAT DATA (Supabase) + penyegaran otomatis bila ada perubahan dari pengguna lain ---------- */
+  const yearRef = useRef(loadFromYear);
+  yearRef.current = loadFromYear;
+  const roleRef = useRef(null);
+  roleRef.current = profile?.role;
+
+  const refreshTable = async (table) => {
+    try {
+      const start = yearRef.current !== 'all' ? `${yearRef.current}-01-01` : null;
+      if (table === 'materials') setDataMaterial(await loadMaterial());
+      else if (table === 'riwayat_po' || table === 'po_items') { setRiwayatPo(await loadPo()); setRiwayatLoaded(true); }
+      else if (table === 'stok_opname' || table === 'stok_opname_items') setRiwayatOpname(await loadOpname());
+      else if (table === 'profiles') { if (roleRef.current === 'Admin') setDaftarPengguna(await loadUsers()); }
+      else if (table === 'barang_masuk') setDataMasuk(await loadMasuk(start));
+      else if (table === 'barang_keluar') setDataKeluar(await loadKeluar(start));
+    } catch (err) {
+      console.error(table, err);
+      notify(`Gagal memuat "${table}": ${pgMessage(err)}`, 'error');
+    }
+  };
+
   useEffect(() => {
     if (!profile) return;
+    let cancelled = false;
     setLoadingCloud(true);
-    let pending = 3;
-    const finish = () => { pending -= 1; if (pending <= 0) setLoadingCloud(false); };
-    const unsubs = [];
-    const sub = (name, setter, extra) => {
-      let first = true;
-      const un = onSnapshot(collection(db, name), (snap) => {
-        setter(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
-        if (extra) extra();
-        if (first) { first = false; finish(); }
-      }, (err) => {
-        console.error(name, err);
-        notify(`Gagal memuat "${name}": ${err.code || err.message}`, 'error');
-        if (first) { first = false; finish(); }
-      });
-      unsubs.push(un);
-    };
-    sub('material', setDataMaterial);
-    sub('riwayatPo', setRiwayatPo, () => setRiwayatLoaded(true));
-    sub('stokOpname', setRiwayatOpname);
-    if (profile.role === 'Admin') {
-      sub('users', setDaftarPengguna);
-    }
-    return () => unsubs.forEach((u) => u());
+    Promise.all(['materials', 'riwayat_po', 'stok_opname', 'profiles'].map(refreshTable))
+      .then(() => { if (!cancelled) setLoadingCloud(false); });
+    return () => { cancelled = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [profile?.uid]);
 
-  /* ---------- HEMAT KUOTA: cek apakah semua transaksi sudah punya kolom Periode ---------- */
-  const checkPeriodeReady = async () => {
-    try {
-      const cnt = async (name, filtered) => (await getCountFromServer(filtered ? query(collection(db, name), where('Periode', '>=', '')) : collection(db, name))).data().count;
-      const [a, b, c, d] = await Promise.all([cnt('barangMasuk'), cnt('barangMasuk', true), cnt('barangKeluar'), cnt('barangKeluar', true)]);
-      setPeriodeReady(a === b && c === d);
-    } catch (err) { console.error('cek periode', err); setPeriodeReady(false); }
-  };
-  useEffect(() => { if (profile) checkPeriodeReady(); }, [profile?.uid]); // eslint-disable-line
-
-  /* ---------- LANGGANAN TRANSAKSI (hanya dari tahun terpilih bila hemat kuota aktif) ---------- */
   useEffect(() => {
-    if (!profile || periodeReady === null || migrating) return;
+    if (!profile) return;
+    let cancelled = false;
     setLoadingTrx(true);
-    let pending = 2;
-    const finish = () => { pending -= 1; if (pending <= 0) setLoadingTrx(false); };
-    const start = periodeReady && loadFromYear !== 'all' ? `${loadFromYear}-01` : null;
-    const unsubs = [];
-    const subTrx = (name, setter) => {
-      let first = true;
-      const ref = start ? query(collection(db, name), where('Periode', '>=', start)) : collection(db, name);
-      unsubs.push(onSnapshot(ref, (snap) => {
-        setter(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
-        if (first) { first = false; finish(); }
-      }, (err) => {
-        console.error(name, err);
-        notify(`Gagal memuat "${name}": ${err.code || err.message}`, 'error');
-        if (first) { first = false; finish(); }
-      }));
-    };
-    subTrx('barangMasuk', setDataMasuk);
-    subTrx('barangKeluar', setDataKeluar);
-    return () => unsubs.forEach((u) => u());
+    Promise.all(['barang_masuk', 'barang_keluar'].map(refreshTable))
+      .then(() => { if (!cancelled) setLoadingTrx(false); });
+    return () => { cancelled = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [profile?.uid, periodeReady, loadFromYear, migrating]);
+  }, [profile?.uid, loadFromYear]);
+
+  useEffect(() => {
+    if (!profile) return;
+    const timers = {};
+    const schedule = (table) => { clearTimeout(timers[table]); timers[table] = setTimeout(() => refreshTable(table), 700); };
+    const ch = supabase.channel('perubahan-data');
+    ['materials', 'barang_masuk', 'barang_keluar', 'riwayat_po', 'po_items', 'stok_opname', 'stok_opname_items', 'profiles']
+      .forEach((t) => ch.on('postgres_changes', { event: '*', schema: 'public', table: t }, () => schedule(t)));
+    ch.subscribe();
+    return () => { Object.values(timers).forEach(clearTimeout); supabase.removeChannel(ch); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [profile?.uid]);
+
   const isFullData = periodeReady === false || loadFromYear === 'all';
 
   /* ---------- TURUNAN DATA ---------- */
@@ -706,32 +687,44 @@ export default function App() {
     setSaving(true);
     try {
       if (editingMaterialId) {
-        await updateDoc(doc(db, 'material', editingMaterialId), { ...base, updatedAt: serverTimestamp(), updatedBy: profile.username });
+        // Kode dan stok tidak diubah dari form edit (stok berubah lewat transaksi / opname)
+        const row = materialToRow({ Kode: editingMaterialId, ...base, Qty: 0 });
+        delete row.kode; delete row.qty;
+        const { error } = await supabase.from('materials')
+          .update({ ...row, updated_at: new Date().toISOString(), updated_by: profile.username })
+          .eq('kode', editingMaterialId);
+        if (error) throw error;
+        await refreshTable('materials');
         notify('Data barang diperbarui.');
         setShowModalMaterial(false);
       } else {
-        const id = safeId(kode);
-        if (dataMaterial.some((m) => m.id === id || String(m.Kode).toLowerCase() === kode.toLowerCase())) {
+        if (dataMaterial.some((m) => String(m.Kode).toLowerCase() === kode.toLowerCase())) {
           setSaving(false);
           return notify('Kode barang sudah ada di Master Barang.', 'error');
         }
-        await setDoc(doc(db, 'material', id), {
-          Kode: kode, ...base, Qty: Number(formMaterial.qty) || 0, createdAt: serverTimestamp(), createdBy: profile.username
-        });
+        const { error } = await supabase.from('materials')
+          .insert({ ...materialToRow({ Kode: kode, ...base, Qty: Number(formMaterial.qty) || 0 }), created_by: profile.username });
+        if (error) throw error;
+        await refreshTable('materials');
         notify(`Produk ${kode} tersimpan. Silakan input barang berikutnya.`);
         // form tetap terbuka; kolom yang biasanya sama dipertahankan
         setFormMaterial((f) => ({ ...emptyMaterial, partUnit: f.partUnit, satuan: f.satuan, lokasi: f.lokasi, minQty: f.minQty }));
         focusById('fm-kode');
       }
-    } catch (err) { console.error(err); notify('Gagal menyimpan: ' + (err.code || err.message), 'error'); }
+    } catch (err) { console.error(err); notify('Gagal menyimpan: ' + pgMessage(err), 'error'); }
     setSaving(false);
   };
 
   const handleDeleteMaterial = async (item) => {
     if (!isAdmin) return notify('Hanya Admin yang dapat menghapus.', 'error');
     if (!window.confirm(`Hapus barang ${item.Kode} - ${item['Nama Barang']}? Riwayat transaksi tidak ikut terhapus.`)) return;
-    try { await deleteDoc(doc(db, 'material', item.id)); notify('Barang dihapus.'); }
-    catch (err) { notify('Gagal menghapus: ' + (err.code || err.message), 'error'); }
+    try {
+      const { data, error } = await supabase.from('materials').delete().eq('kode', item.id).select();
+      if (error) throw error;
+      if (!data || data.length === 0) throw new Error('Tidak ada data yang terhapus (akses ditolak?).');
+      await refreshTable('materials');
+      notify('Barang dihapus.');
+    } catch (err) { notify('Gagal menghapus: ' + pgMessage(err), 'error'); }
   };
 
   /* ============================== AKSI: STOK MASUK / KELUAR ============================== */
@@ -777,59 +770,35 @@ export default function App() {
     if (!(qty > 0)) return notify('Qty harus lebih dari 0.', 'error');
     setSaving(true);
     try {
-      const matRef = doc(db, 'material', mat.id);
       const fields = {
         Tanggal: formMasuk.tanggal, Unit: formMasuk.unit.trim(), Kode: mat.Kode,
         'Material Number': String(formMasuk.materialNumber).trim(),
         Description: formMasuk.description.trim(), Merk: String(formMasuk.merk).trim(),
         'No. PO': formMasuk.noPo.trim(), 'No. Surat Jalan': formMasuk.suratJalan.trim(), Qty: qty, Satuan: formMasuk.satuan.trim(),
         'Kekurangan Supply': formMasuk.kekurangan === '' ? 0 : Number(formMasuk.kekurangan) || 0,
-        Keterangan: formMasuk.keterangan.trim(), Periode: periodeOf(formMasuk.tanggal)
+        Keterangan: formMasuk.keterangan.trim()
       };
+      const row = masukToRow(fields);
       if (editingMasukId) {
-        // EDIT: stok dikoreksi sebesar selisih qty lama dan baru
-        const trxRef = doc(db, 'barangMasuk', editingMasukId);
-        await runTransaction(db, async (t) => {
-          const oldSnap = await t.get(trxRef);
-          if (!oldSnap.exists()) throw new Error('Transaksi tidak ditemukan (mungkin sudah dihapus).');
-          const old = oldSnap.data();
-          const oldQty = Number(old.Qty || 0);
-          const oldMat = materialByKode.get(String(old.Kode || '').toLowerCase());
-          const sameMat = !oldMat || oldMat.id === mat.id;
-          const newSnap = await t.get(matRef);
-          if (!newSnap.exists()) throw new Error('Master barang tidak ditemukan');
-          const oldMatSnap = sameMat ? null : await t.get(doc(db, 'material', oldMat.id));
-          if (sameMat) {
-            const next = Number(newSnap.data().Qty || 0) - (oldMat ? oldQty : 0) + qty;
-            if (next < 0) throw new Error(`Stok akan menjadi minus (${next}). Perubahan tidak bisa disimpan.`);
-            t.update(matRef, { Qty: next });
-          } else {
-            if (oldMatSnap.exists()) {
-              const c = Number(oldMatSnap.data().Qty || 0);
-              if (c < oldQty) throw new Error(`Stok ${oldMat.Kode} (${c}) lebih kecil dari qty lama (${oldQty}); kode tidak bisa diganti.`);
-              t.update(oldMatSnap.ref, { Qty: c - oldQty });
-            }
-            t.update(matRef, { Qty: Number(newSnap.data().Qty || 0) + qty });
-          }
-          t.update(trxRef, { ...fields, updatedAt: serverTimestamp(), updatedBy: profile.username });
-        });
+        // EDIT: stok dikoreksi otomatis oleh database sebesar selisih qty lama dan baru
+        const { error } = await supabase.from('barang_masuk')
+          .update({ ...row, updated_at: new Date().toISOString(), updated_by: profile.username })
+          .eq('id', Number(editingMasukId));
+        if (error) throw error;
+        await Promise.all([refreshTable('barang_masuk'), refreshTable('materials')]);
         notify(`Stok masuk ${mat.Kode} berhasil diedit & stok dikoreksi.`);
         setFormMasuk({ ...emptyMasuk, tanggal: todayISO() });
         closeModalMasuk();
         setSaving(false);
         return;
       }
-      const newRef = doc(collection(db, 'barangMasuk'));
-      await runTransaction(db, async (t) => {
-        const s = await t.get(matRef);
-        if (!s.exists()) throw new Error('Master barang tidak ditemukan');
-        t.update(matRef, { Qty: Number(s.data().Qty || 0) + qty });
-        t.set(newRef, { ...fields, createdAt: serverTimestamp(), createdBy: profile.username });
-      });
+      const { error } = await supabase.from('barang_masuk').insert({ ...row, created_by: profile.username });
+      if (error) throw error;
+      await Promise.all([refreshTable('barang_masuk'), refreshTable('materials')]);
       notify(`Stok masuk ${mat.Kode} (+${qty}) tersimpan. Silakan input barang berikutnya.`);
       setFormMasuk((f) => ({ ...emptyMasuk, tanggal: f.tanggal, unit: f.unit, noPo: f.noPo, suratJalan: f.suratJalan, satuan: f.satuan }));
       focusById('fi-kode');
-    } catch (err) { console.error(err); notify('Gagal: ' + (err.message || err.code), 'error'); }
+    } catch (err) { console.error(err); notify('Gagal: ' + pgMessage(err), 'error'); }
     setSaving(false);
   };
 
@@ -842,84 +811,48 @@ export default function App() {
     if (!(qty > 0)) return notify('Qty harus lebih dari 0.', 'error');
     setSaving(true);
     try {
-      const matRef = doc(db, 'material', mat.id);
       const fields = {
         'Doc.Date': formKeluar.tanggal, Unit: formKeluar.unit.trim(), Kode: mat.Kode,
         'Nomor Barang': String(formKeluar.nomorBarang).trim(),
         'Nama Barang': formKeluar.namaBarang.trim(), Mekanik: formKeluar.mekanik.trim(),
         'No. WO': formKeluar.noWo.trim(), HM_KM: formKeluar.hmKm.trim(),
-        Keterangan: formKeluar.keterangan.trim(), Qty: qty, Periode: periodeOf(formKeluar.tanggal)
+        Keterangan: formKeluar.keterangan.trim(), Qty: qty
       };
+      const row = keluarToRow(fields);
       if (editingKeluarId) {
-        // EDIT: stok dikoreksi sebesar selisih qty lama dan baru
-        const trxRef = doc(db, 'barangKeluar', editingKeluarId);
-        await runTransaction(db, async (t) => {
-          const oldSnap = await t.get(trxRef);
-          if (!oldSnap.exists()) throw new Error('Transaksi tidak ditemukan (mungkin sudah dihapus).');
-          const old = oldSnap.data();
-          const oldQty = Number(old.Qty || 0);
-          const oldMat = materialByKode.get(String(old.Kode || '').toLowerCase());
-          const sameMat = !oldMat || oldMat.id === mat.id;
-          const newSnap = await t.get(matRef);
-          if (!newSnap.exists()) throw new Error('Master barang tidak ditemukan');
-          const oldMatSnap = sameMat ? null : await t.get(doc(db, 'material', oldMat.id));
-          const cur = Number(newSnap.data().Qty || 0);
-          if (sameMat) {
-            const next = cur + (oldMat ? oldQty : 0) - qty;
-            if (next < 0) throw new Error(`Stok tidak cukup. Stok tersedia untuk transaksi ini: ${cur + (oldMat ? oldQty : 0)}`);
-            t.update(matRef, { Qty: next });
-          } else {
-            if (cur < qty) throw new Error(`Stok tidak cukup. Stok saat ini: ${cur}`);
-            if (oldMatSnap.exists()) t.update(oldMatSnap.ref, { Qty: Number(oldMatSnap.data().Qty || 0) + oldQty });
-            t.update(matRef, { Qty: cur - qty });
-          }
-          t.update(trxRef, { ...fields, updatedAt: serverTimestamp(), updatedBy: profile.username });
-        });
+        const { error } = await supabase.from('barang_keluar')
+          .update({ ...row, updated_at: new Date().toISOString(), updated_by: profile.username })
+          .eq('id', Number(editingKeluarId));
+        if (error) throw error;
+        await Promise.all([refreshTable('barang_keluar'), refreshTable('materials')]);
         notify(`Stok keluar ${mat.Kode} berhasil diedit & stok dikoreksi.`);
         setFormKeluar({ ...emptyKeluar, tanggal: todayISO() });
         closeModalKeluar();
         setSaving(false);
         return;
       }
-      const newRef = doc(collection(db, 'barangKeluar'));
-      await runTransaction(db, async (t) => {
-        const s = await t.get(matRef);
-        if (!s.exists()) throw new Error('Master barang tidak ditemukan');
-        const cur = Number(s.data().Qty || 0);
-        if (cur < qty) throw new Error(`Stok tidak cukup. Stok saat ini: ${cur}`);
-        t.update(matRef, { Qty: cur - qty });
-        t.set(newRef, { ...fields, createdAt: serverTimestamp(), createdBy: profile.username });
-      });
+      const { error } = await supabase.from('barang_keluar').insert({ ...row, created_by: profile.username });
+      if (error) throw error;
+      await Promise.all([refreshTable('barang_keluar'), refreshTable('materials')]);
       notify(`Stok keluar ${mat.Kode} (-${qty}) tersimpan. Silakan input barang berikutnya.`);
       setFormKeluar((f) => ({ ...emptyKeluar, tanggal: f.tanggal, unit: f.unit, mekanik: f.mekanik, noWo: f.noWo, hmKm: f.hmKm }));
       focusById('fk-kode');
-    } catch (err) { console.error(err); notify('Gagal: ' + (err.message || err.code), 'error'); }
+    } catch (err) { console.error(err); notify('Gagal: ' + pgMessage(err), 'error'); }
     setSaving(false);
   };
 
-  // Hapus transaksi sekaligus mengembalikan stok
+  // Hapus transaksi; stok dikoreksi otomatis oleh database
   const handleDeleteTrx = async (type, item) => {
     if (!isAdmin) return notify('Hanya Admin yang dapat menghapus transaksi.', 'error');
     if (!window.confirm('Hapus transaksi ini? Stok barang akan dikoreksi otomatis.')) return;
-    const colName = type === 'masuk' ? 'barangMasuk' : 'barangKeluar';
-    const mat = materialByKode.get(String(item.Kode || '').toLowerCase());
-    const qty = Number(item.Qty || 0);
+    const table = type === 'masuk' ? 'barang_masuk' : 'barang_keluar';
     try {
-      await runTransaction(db, async (t) => {
-        const trxRef = doc(db, colName, item.id);
-        if (mat) {
-          const matRef = doc(db, 'material', mat.id);
-          const s = await t.get(matRef);
-          if (s.exists()) {
-            const cur = Number(s.data().Qty || 0);
-            if (type === 'masuk' && cur < qty) throw new Error(`Stok saat ini (${cur}) lebih kecil dari qty transaksi (${qty}); tidak bisa dibatalkan.`);
-            t.update(matRef, { Qty: type === 'masuk' ? cur - qty : cur + qty });
-          }
-        }
-        t.delete(trxRef);
-      });
+      const { data, error } = await supabase.from(table).delete().eq('id', Number(item.id)).select();
+      if (error) throw error;
+      if (!data || data.length === 0) throw new Error('Tidak ada data yang terhapus (akses ditolak?).');
+      await Promise.all([refreshTable(table), refreshTable('materials')]);
       notify('Transaksi dihapus & stok dikoreksi.');
-    } catch (err) { notify('Gagal: ' + (err.message || err.code), 'error'); }
+    } catch (err) { notify('Gagal: ' + pgMessage(err), 'error'); }
   };
 
   /* ============================== AKSI: STOK OPNAME ============================== */
@@ -934,21 +867,15 @@ export default function App() {
     if (!window.confirm(`Simpan opname? Stok ${opnameChanges.length} barang akan disesuaikan dengan hitungan fisik.`)) return;
     setSaving(true);
     try {
-      const tanggal = todayISO();
-      const items = opnameChanges.map((m) => {
-        const fisik = Number(physicalStocks[m.id]);
-        const sistem = Number(m.Qty || 0);
-        return { kode: m.Kode, nama: m['Nama Barang'] || '', sistem, fisik, selisih: fisik - sistem };
-      });
-      for (const part of chunk(opnameChanges, 400)) {
-        const batch = writeBatch(db);
-        part.forEach((m) => batch.update(doc(db, 'material', m.id), { Qty: Number(physicalStocks[m.id]) }));
-        await batch.commit();
+      const items = opnameChanges.map((m) => ({ kode: m.Kode, fisik: Number(physicalStocks[m.id]) }));
+      for (const part of chunkArr(items, 1000)) {
+        const { error } = await supabase.rpc('save_opname', { p_items: part });
+        if (error) throw error;
       }
-      await addDoc(collection(db, 'stokOpname'), { tanggal, items, createdAt: serverTimestamp(), createdBy: profile.username });
+      await Promise.all([refreshTable('materials'), refreshTable('stok_opname')]);
       setPhysicalStocks({});
       notify(`Opname tersimpan. ${items.length} barang disesuaikan.`);
-    } catch (err) { console.error(err); notify('Gagal menyimpan opname: ' + (err.code || err.message), 'error'); }
+    } catch (err) { console.error(err); notify('Gagal menyimpan opname: ' + pgMessage(err), 'error'); }
     setSaving(false);
   };
 
@@ -1114,25 +1041,25 @@ export default function App() {
     setSaving(true);
     let ok = false;
     try {
-      const payload = {
-        ...poHeader, noPo: poHeader.noPo.trim(), dibuatOleh: profile.nama,
-        items: items.map(({ id, ...r }) => clean(r))
-      };
+      const header = poHeaderToRow({ ...poHeader, noPo: poHeader.noPo.trim(), dibuatOleh: profile.nama });
+      const rows = items.map(({ id, ...r }) => clean(r));
+      const { data: newId, error } = await supabase.rpc('save_po', {
+        p_id: editingPoId ? Number(editingPoId) : null, p_header: header, p_items: rows
+      });
+      if (error) throw error;
+      await refreshTable('riwayat_po');
       if (editingPoId) {
-        await updateDoc(doc(db, 'riwayatPo', editingPoId), { ...payload, updatedAt: serverTimestamp() });
         notify('PO di arsip diperbarui.');
       } else {
-        const ref = await addDoc(collection(db, 'riwayatPo'), { ...payload, createdAt: serverTimestamp(), createdBy: profile.username });
         notify('PO disimpan ke arsip.');
-        if (keep === true) { setEditingPoId(ref.id); }
+        if (keep === true) { setEditingPoId(String(newId)); }
         else { setEditingPoId(null); setPoHeader(newPoHeader()); setPoItems(makePoRows()); setPoSel(null); }
       }
       ok = true;
-    } catch (err) { console.error(err); notify('Gagal menyimpan PO: ' + (err.code || err.message), 'error'); }
+    } catch (err) { console.error(err); notify('Gagal menyimpan PO: ' + pgMessage(err), 'error'); }
     setSaving(false);
     return ok;
   };
-  // Cetak dipanggil langsung saat klik (tanpa menunggu server) supaya dialog cetak pasti muncul; penyimpanan berjalan bersamaan
   const savePoAndPrint = () => {
     if (!canEdit) return notify('Akses ditolak!', 'error');
     if (!poItems.some((i) => i.uraian.trim() || i.partNumber.trim())) return notify('Isi minimal satu baris barang.', 'error');
@@ -1178,40 +1105,15 @@ export default function App() {
     if (lebih.length && !window.confirm(`${lebih.length} baris melebihi jumlah yang dipesan. Tetap simpan?`)) return;
     setSaving(true);
     try {
-      const poRef = doc(db, 'riwayatPo', po.id);
-      const newRefs = lines.map(() => doc(collection(db, 'barangMasuk')));
-      await runTransaction(db, async (t) => {
-        const poSnap = await t.get(poRef);
-        if (!poSnap.exists()) throw new Error('PO tidak ditemukan (mungkin sudah dihapus).');
-        const cur = poSnap.data();
-        const items = (cur.items || []).map((x) => ({ ...x }));
-        const matSnaps = {};
-        for (const id of [...new Set(lines.map((l) => l.mat.id))]) {
-          const sn = await t.get(doc(db, 'material', id));
-          if (!sn.exists()) throw new Error('Master barang tidak ditemukan.');
-          matSnaps[id] = sn;
-        }
-        const add = {};
-        lines.forEach((l, k) => {
-          const it = items[l.i];
-          const ord = qtyNum(it.qty) || 0;
-          const got = (Number(it.diterima) || 0) + l.qty;
-          it.diterima = got;
-          add[l.mat.id] = (add[l.mat.id] || 0) + l.qty;
-          t.set(newRefs[k], {
-            Tanggal: f.tanggal, Unit: f.unit.trim(), Kode: l.mat.Kode, 'Material Number': String(l.mat['Nomor Barang'] ?? ''),
-            Description: l.mat['Nama Barang'] || it.uraian || '', Merk: l.mat.Merk || l.mat['Part Unit'] || '',
-            'No. PO': cur.noPo || '', 'No. Surat Jalan': f.suratJalan.trim(), Qty: l.qty, Satuan: l.mat.Satuan || 'Pcs',
-            'Kekurangan Supply': Math.max(0, ord - got), Keterangan: (l.ket || '').trim() || 'Penerimaan dari PO',
-            Periode: periodeOf(f.tanggal), poId: po.id, createdAt: serverTimestamp(), createdBy: profile.username
-          });
-        });
-        Object.entries(add).forEach(([id, q]) => t.update(doc(db, 'material', id), { Qty: Number(matSnaps[id].data().Qty || 0) + q }));
-        t.update(poRef, { items, ditutup: !!f.tutup, updatedAt: serverTimestamp() });
+      const { error } = await supabase.rpc('terima_po', {
+        p_po_id: Number(po.id), p_tanggal: f.tanggal, p_surat_jalan: f.suratJalan.trim(), p_unit: f.unit.trim(), p_tutup: !!f.tutup,
+        p_lines: lines.map((l) => ({ idx: l.i, kode: l.mat.Kode, qty: l.qty, ket: (l.ket || '').trim() }))
       });
+      if (error) throw error;
+      await Promise.all([refreshTable('riwayat_po'), refreshTable('barang_masuk'), refreshTable('materials')]);
       notify(lines.length ? `Penerimaan PO ${po.noPo} tersimpan: ${lines.length} barang masuk ke Stok Masuk & stok bertambah.` : `Status PO ${po.noPo} diperbarui.`);
       closeTerima();
-    } catch (err) { console.error(err); notify('Gagal menyimpan penerimaan: ' + (err.message || err.code), 'error'); }
+    } catch (err) { console.error(err); notify('Gagal menyimpan penerimaan: ' + pgMessage(err), 'error'); }
     setSaving(false);
   };
 
@@ -1230,8 +1132,13 @@ export default function App() {
   const deletePo = async (po) => {
     if (!isAdmin) return notify('Hanya Admin yang dapat menghapus arsip PO.', 'error');
     if (!window.confirm(`Hapus arsip PO ${po.noPo}?`)) return;
-    try { await deleteDoc(doc(db, 'riwayatPo', po.id)); notify('Arsip PO dihapus.'); }
-    catch (err) { notify('Gagal: ' + (err.code || err.message), 'error'); }
+    try {
+      const { data, error } = await supabase.from('riwayat_po').delete().eq('id', Number(po.id)).select();
+      if (error) throw error;
+      if (!data || data.length === 0) throw new Error('Tidak ada data yang terhapus (akses ditolak?).');
+      await refreshTable('riwayat_po');
+      notify('Arsip PO dihapus.');
+    } catch (err) { notify('Gagal: ' + pgMessage(err), 'error'); }
   };
 
   /* ============================== AKSI: PENGGUNA ============================== */
@@ -1244,17 +1151,21 @@ export default function App() {
     setSaving(true);
     try {
       const email = usernameToEmail(username);
-      const cred = await createUserWithEmailAndPassword(secondaryAuth, email, formUser.password);
-      await setDoc(doc(db, 'users', cred.user.uid), {
-        nama: formUser.nama.trim(), username, email, role: formUser.role, site: 'Bontang', status: 'Aktif',
-        createdAt: serverTimestamp(), createdBy: profile.username
+      // Klien kedua dipakai agar Admin yang sedang login tidak ikut keluar
+      const { data, error } = await supabaseSignup.auth.signUp({ email, password: formUser.password });
+      if (error) throw error;
+      if (!data.user || (data.user.identities && data.user.identities.length === 0)) throw new Error('already registered');
+      const { error: e2 } = await supabase.from('profiles').insert({
+        id: data.user.id, nama: formUser.nama.trim(), username, role: formUser.role, site: 'Bontang', status: 'Aktif', created_by: profile.username
       });
-      await signOut(secondaryAuth);
+      if (e2) throw e2;
+      await supabaseSignup.auth.signOut();
       setShowModalUser(false); setFormUser({ nama: '', username: '', password: '', role: 'Editor' });
+      await refreshTable('profiles');
       notify('Pengguna berhasil ditambahkan.');
     } catch (err) {
       console.error(err);
-      notify(err.code === 'auth/email-already-in-use' ? 'Username sudah dipakai.' : 'Gagal menambah pengguna: ' + (err.code || err.message), 'error');
+      notify(/already registered|already been registered/i.test(String(err.message)) ? 'Username sudah dipakai.' : 'Gagal menambah pengguna: ' + pgMessage(err), 'error');
     }
     setSaving(false);
   };
@@ -1262,16 +1173,24 @@ export default function App() {
   const updateUserField = async (u, patch) => {
     if (!isAdmin) return;
     if (u.id === profile.uid) return notify('Anda tidak dapat mengubah akun Anda sendiri.', 'error');
-    try { await updateDoc(doc(db, 'users', u.id), patch); notify('Pengguna diperbarui.'); }
-    catch (err) { notify('Gagal: ' + (err.code || err.message), 'error'); }
+    try {
+      const { error } = await supabase.from('profiles').update(patch).eq('id', u.id);
+      if (error) throw error;
+      await refreshTable('profiles');
+      notify('Pengguna diperbarui.');
+    } catch (err) { notify('Gagal: ' + pgMessage(err), 'error'); }
   };
 
   const handleDeleteUser = async (u) => {
     if (!isAdmin) return;
     if (u.id === profile.uid) return notify('Anda tidak dapat menghapus akun Anda sendiri.', 'error');
     if (!window.confirm(`Cabut akses pengguna ${u.username}?`)) return;
-    try { await deleteDoc(doc(db, 'users', u.id)); notify('Akses pengguna dicabut.'); }
-    catch (err) { notify('Gagal: ' + (err.code || err.message), 'error'); }
+    try {
+      const { error } = await supabase.from('profiles').delete().eq('id', u.id);
+      if (error) throw error;
+      await refreshTable('profiles');
+      notify('Akses pengguna dicabut.');
+    } catch (err) { notify('Gagal: ' + pgMessage(err), 'error'); }
   };
 
   const changePassword = async (e) => {
@@ -1279,13 +1198,16 @@ export default function App() {
     if (pwForm.baru.length < 6) return notify('Password baru minimal 6 karakter.', 'error');
     if (pwForm.baru !== pwForm.ulang) return notify('Konfirmasi password tidak sama.', 'error');
     try {
-      const cred = EmailAuthProvider.credential(auth.currentUser.email, pwForm.lama);
-      await reauthenticateWithCredential(auth.currentUser, cred);
-      await updatePassword(auth.currentUser, pwForm.baru);
+      // verifikasi password lama lewat klien terpisah supaya sesi utama tidak terganggu
+      const { error: e1 } = await supabaseSignup.auth.signInWithPassword({ email: profile.email, password: pwForm.lama });
+      if (e1) throw e1;
+      await supabaseSignup.auth.signOut();
+      const { error } = await supabase.auth.updateUser({ password: pwForm.baru });
+      if (error) throw error;
       setPwForm({ lama: '', baru: '', ulang: '' });
       notify('Password berhasil diganti.');
     } catch (err) {
-      notify(err.code === 'auth/invalid-credential' || err.code === 'auth/wrong-password' ? 'Password lama salah.' : 'Gagal: ' + (err.code || err.message), 'error');
+      notify(/invalid login credentials/i.test(String(err.message)) ? 'Password lama salah.' : 'Gagal: ' + pgMessage(err), 'error');
     }
   };
 
@@ -1352,7 +1274,7 @@ export default function App() {
             'Part Unit': partUnitOf(r), 'Base Unit of Measure': baseUnitOf(r),
             Satuan: satuanOf(r),
             Qty: num(r.Qty), Lokasi: str(r.Lokasi) || 'Rak A1', MinQty: r.MinQty !== undefined ? num(r.MinQty, 5) : 5,
-            createdAt: serverTimestamp(), createdBy: profile.username
+            createdBy: profile.username
           } };
         });
       const existingById = new Map(dataMaterial.map((m) => [m.id, m]));
@@ -1369,18 +1291,15 @@ export default function App() {
       stage = 'master barang';
       let done = 0;
       for (const part of chunk(newMat, 400)) {
-        const batch = writeBatch(db);
-        part.forEach((m) => batch.set(doc(db, 'material', m.id), m.data));
-        await batch.commit();
+        const { error: upErr } = await supabase.from('materials').upsert(part.map((m) => materialToRow(m.data)), { onConflict: 'kode', ignoreDuplicates: true });
+        if (upErr) throw upErr;
         done += part.length;
         setImportMsg(`Mengimpor master barang... ${done}/${newMat.length}`);
       }
       stage = 'memperbarui data master barang';
       let filled = 0;
       for (const part of chunk(backfill, 400)) {
-        const batch = writeBatch(db);
-        part.forEach((x) => batch.update(doc(db, 'material', x.id), x.upd));
-        await batch.commit();
+        await runPar(part, (x) => supabase.from('materials').update(colMap(x.upd, MATERIAL_COLS)).eq('kode', x.id));
         filled += part.length;
         setImportMsg(`Memperbarui data master barang... ${filled}/${backfill.length}`);
       }
@@ -1402,12 +1321,11 @@ export default function App() {
         const rows = masukRows.filter((r) => r.Kode !== undefined).map((r) => ({
           Tanggal: toISODate(r.Tanggal), Periode: periodeOf(r.Tanggal), Unit: str(r.Unit), Kode: str(r.Kode), 'Material Number': '',
           Description: str(r.Description), Merk: str(r.Merk), 'No. PO': '', 'No. Surat Jalan': '', Qty: num(r.Qty), Satuan: '',
-          createdAt: serverTimestamp(), createdBy: profile.username, ...masukFields(r)
+          createdBy: profile.username, ...masukFields(r)
         }));
         for (const part of chunk(rows, 400)) {
-          const batch = writeBatch(db);
-          part.forEach((r) => batch.set(doc(collection(db, 'barangMasuk')), r));
-          await batch.commit(); masukCount += part.length;
+          const { error: impErr } = await supabase.rpc('import_transaksi', { p_masuk: part.map(masukToRow), p_keluar: [] });
+          if (impErr) throw impErr; masukCount += part.length;
           setImportMsg(`Mengimpor barang masuk... ${masukCount}/${rows.length}`);
         }
       } else {
@@ -1423,9 +1341,7 @@ export default function App() {
           if (Object.keys(upd).length) ups.push({ id: d.id, upd });
         });
         for (const part of chunk(ups, 400)) {
-          const batch = writeBatch(db);
-          part.forEach((x) => batch.update(doc(db, 'barangMasuk', x.id), x.upd));
-          await batch.commit(); fillM += part.length;
+          await runPar(part, (x) => supabase.from('barang_masuk').update(colMap(x.upd, MASUK_COLS)).eq('id', Number(x.id))); fillM += part.length;
           setImportMsg(`Melengkapi barang masuk... ${fillM}/${ups.length}`);
         }
       }
@@ -1443,12 +1359,11 @@ export default function App() {
         const rows = keluarRows.filter((r) => r.Kode !== undefined).map((r) => ({
           'Doc.Date': toISODate(r['Doc.Date']), Periode: periodeOf(r['Doc.Date']), Unit: str(r.Unit), Kode: str(r.Kode),
           'Nomor Barang': '', 'Nama Barang': str(r['Nama Barang']), Mekanik: str(r.Mekanik), 'No. WO': '', HM_KM: '', Keterangan: '',
-          Qty: num(r.Qty), createdAt: serverTimestamp(), createdBy: profile.username, ...keluarFields(r)
+          Qty: num(r.Qty), createdBy: profile.username, ...keluarFields(r)
         }));
         for (const part of chunk(rows, 400)) {
-          const batch = writeBatch(db);
-          part.forEach((r) => batch.set(doc(collection(db, 'barangKeluar')), r));
-          await batch.commit(); keluarCount += part.length;
+          const { error: impErr } = await supabase.rpc('import_transaksi', { p_masuk: [], p_keluar: part.map(keluarToRow) });
+          if (impErr) throw impErr; keluarCount += part.length;
           setImportMsg(`Mengimpor barang keluar... ${keluarCount}/${rows.length}`);
         }
       } else {
@@ -1464,9 +1379,7 @@ export default function App() {
           if (Object.keys(upd).length) ups.push({ id: d.id, upd });
         });
         for (const part of chunk(ups, 400)) {
-          const batch = writeBatch(db);
-          part.forEach((x) => batch.update(doc(db, 'barangKeluar', x.id), x.upd));
-          await batch.commit(); fillK += part.length;
+          await runPar(part, (x) => supabase.from('barang_keluar').update(colMap(x.upd, KELUAR_COLS)).eq('id', Number(x.id))); fillK += part.length;
           setImportMsg(`Melengkapi barang keluar... ${fillK}/${ups.length}`);
         }
       }
@@ -1483,8 +1396,7 @@ export default function App() {
       notify('Impor selesai.');
     } catch (err) {
       console.error(err);
-      let m = `Gagal impor tahap "${stage}": ${err.code || ''} ${err.message || ''}`;
-      if (err.code === 'resource-exhausted') m += '\nKuota tulis harian Firebase habis. Data yang sudah tersimpan aman; ulangi impor setelah kuota reset (sekitar pukul 15.00 WIB).';
+      let m = `Gagal impor tahap "${stage}": ${pgMessage(err)}`;
       setImportMsg(m); notify(m, 'error');
     }
     setImporting(false);
@@ -1516,18 +1428,18 @@ export default function App() {
     setImporting(true); setImportMsg('Menghitung ulang stok...');
     try {
       let done = 0;
-      for (const part of chunk(changes, 400)) {
-        const batch = writeBatch(db);
-        part.forEach((x) => batch.update(doc(db, 'material', x.m.id), { Qty: x.qty }));
-        await batch.commit();
+      for (const part of chunkArr(changes, 1000)) {
+        const { error } = await supabase.rpc('set_stok_massal', { p_items: part.map((x) => ({ kode: x.m.Kode, qty: x.qty })) });
+        if (error) throw error;
         done += part.length;
         setImportMsg(`Menghitung ulang stok... ${done}/${changes.length}`);
       }
+      await refreshTable('materials');
       setImportMsg(`Selesai. ${changes.length} barang diperbarui.`);
       notify('Stok berhasil dihitung ulang.');
     } catch (err) {
       console.error(err);
-      const m = err.code === 'resource-exhausted' ? 'Kuota tulis harian Firebase habis. Coba lagi setelah kuota reset (sekitar pukul 15.00 WIB).' : 'Gagal: ' + (err.code || err.message);
+      const m = 'Gagal: ' + pgMessage(err);
       setImportMsg(m); notify(m, 'error');
     }
     setImporting(false);
@@ -1539,61 +1451,24 @@ export default function App() {
     if (resetText.trim() !== 'HAPUS') return notify('Ketik HAPUS (huruf besar) untuk konfirmasi.', 'error');
     if (!window.confirm('YAKIN? Semua Barang Masuk, Barang Keluar, Arsip PO, dan Riwayat Opname akan DIHAPUS PERMANEN. Master Barang dan akun pengguna tetap aman. Pastikan sudah backup (menu Laporan).')) return;
     setResetting(true); setResetMsg('Memulai...');
-    const names = ['barangMasuk', 'barangKeluar', 'riwayatPo', 'stokOpname'];
-    let total = 0;
     try {
-      for (const name of names) {
-        let n = 0;
-        for (;;) {
-          const snap = await getDocsFromServer(query(collection(db, name), limit(400)));
-          if (snap.empty) break;
-          const batch = writeBatch(db);
-          snap.docs.forEach((d) => batch.delete(d.ref));
-          await batch.commit();
-          n += snap.size; total += snap.size;
-          setResetMsg(`Menghapus ${name}... ${n} dokumen (total ${total})`);
-        }
-      }
-      setResetMsg(`Selesai. ${total} dokumen dihapus. Master Barang tidak diubah. Silakan impor file Excel yang baru.`);
+      const { data, error } = await supabase.rpc('reset_transaksi');
+      if (error) throw error;
+      setResetMsg(`Selesai. ${data} data dihapus. Master Barang tidak diubah. Silakan impor file Excel yang baru.`);
       notify('Reset selesai.');
       setResetText(''); setPhysicalStocks({});
-      checkPeriodeReady();
+      await Promise.all(['barang_masuk', 'barang_keluar', 'riwayat_po', 'stok_opname'].map(refreshTable));
     } catch (err) {
       console.error(err);
-      const m = err.code === 'resource-exhausted' ? `Kuota harian Firebase habis setelah ${total} dokumen terhapus. Jalankan lagi setelah kuota reset (sekitar pukul 15.00 WIB); proses akan melanjutkan sisanya.` : err.code === 'permission-denied' ? `Ditolak oleh Firestore Rules setelah ${total} dokumen terhapus. Hapus sisa koleksi lewat Firebase Console.` : `Gagal setelah ${total} dokumen: ${err.code || err.message}`;
+      const m = 'Gagal: ' + pgMessage(err);
       setResetMsg(m); notify(m, 'error');
     }
     setResetting(false);
   };
 
-  const unmigratedCount = useMemo(() => (periodeReady === false ? dataMasuk.filter((d) => !d.Periode).length + dataKeluar.filter((d) => !d.Periode).length : 0), [periodeReady, dataMasuk, dataKeluar]);
-  const migratePeriode = async () => {
-    if (!isAdmin) return notify('Hanya Admin.', 'error');
-    const todo = [
-      ...dataMasuk.filter((d) => !d.Periode).map((d) => ({ col: 'barangMasuk', id: d.id, p: periodeOf(d.Tanggal) })),
-      ...dataKeluar.filter((d) => !d.Periode).map((d) => ({ col: 'barangKeluar', id: d.id, p: periodeOf(d['Doc.Date']) }))
-    ];
-    if (todo.length === 0) { setMigMsg('Memeriksa ulang...'); await checkPeriodeReady(); setMigMsg(''); return; }
-    if (!window.confirm(`Migrasi akan menulis ${todo.length} dokumen (${todo.length} writes dari kuota 20.000/hari).\nJalankan sendirian, tutup aplikasi di perangkat lain, dan jangan impor data pada hari yang sama.\nLanjutkan?`)) return;
-    setMigrating(true); let done = 0;
-    try {
-      for (const part of chunk(todo, 400)) {
-        const batch = writeBatch(db);
-        part.forEach((x) => batch.update(doc(db, x.col, x.id), { Periode: x.p }));
-        await batch.commit(); done += part.length;
-        setMigMsg(`Migrasi... ${done}/${todo.length}`);
-      }
-      setMigMsg('Selesai. Memeriksa ulang...');
-      await checkPeriodeReady();
-      notify('Migrasi selesai. Mode hemat kuota aktif.');
-      setMigMsg('');
-    } catch (err) {
-      console.error(err);
-      const m = err.code === 'resource-exhausted' ? `Kuota tulis habis di ${done}/${todo.length}. Lanjutkan setelah kuota reset (tekan tombol migrasi lagi, proses akan melanjutkan sisanya).` : 'Gagal: ' + (err.code || err.message);
-      setMigMsg(m); notify(m, 'error');
-    }
-    setMigrating(false);
-  };
+  // Migrasi Periode tidak diperlukan lagi di Supabase (Periode dihitung dari tanggal)
+  const unmigratedCount = 0;
+  const migratePeriode = async () => {};
 
   const dataRangeBar = (note) => {
     const thisYear = new Date().getFullYear();
@@ -1805,7 +1680,7 @@ export default function App() {
 
           {emptyHint && activeTab !== 'Pengaturan' && activeTab !== 'Pengguna' && (
             <div className="no-print mb-4 p-4 rounded-xl border border-yellow-300 bg-yellow-50 text-yellow-900 text-xs font-medium">
-              Database masih kosong. {isAdmin ? <>Buka menu <button className="underline font-bold" onClick={() => goTab('Pengaturan')}>Pengaturan</button> lalu impor data Excel ke Firestore.</> : 'Minta Admin untuk mengimpor data awal.'}
+              Database masih kosong. {isAdmin ? <>Buka menu <button className="underline font-bold" onClick={() => goTab('Pengaturan')}>Pengaturan</button> lalu impor data Excel ke Supabase.</> : 'Minta Admin untuk mengimpor data awal.'}
             </div>
           )}
 
@@ -2338,7 +2213,7 @@ export default function App() {
                   ))}
                 </tbody>
               </table>
-              <p className="p-3 text-[11px] text-slate-400 border-t">Catatan: "Cabut akses" menghapus profil pengguna sehingga tidak bisa masuk lagi. Akun loginnya dapat dihapus total dari Firebase Console → Authentication.</p>
+              <p className="p-3 text-[11px] text-slate-400 border-t">Catatan: "Cabut akses" menghapus profil pengguna sehingga tidak bisa masuk lagi. Akun loginnya dapat dihapus total dari dashboard Supabase → Authentication → Users.</p>
             </div>
           )}
 
@@ -2389,7 +2264,7 @@ export default function App() {
 
               {isAdmin && (
                 <div className={`p-6 rounded-xl border shadow-sm space-y-3 ${card}`}>
-                  <h3 className="font-bold text-sm border-b pb-2 flex items-center gap-2"><Upload size={16} /> Impor Data Excel ke Firestore</h3>
+                  <h3 className="font-bold text-sm border-b pb-2 flex items-center gap-2"><Upload size={16} /> Impor Data Excel ke Supabase</h3>
                   <p className="text-xs text-slate-400">Membaca sheet <b>MATERIAL</b>, <b>Barang Masuk</b>, dan <b>Barang Keluar</b>. Master barang yang sudah ada tidak ditimpa. Barang masuk/keluar hanya diimpor bila datanya masih kosong (mencegah data ganda).</p>
                   <div className="flex flex-wrap gap-2 items-center">
                     <label className={`px-3 py-2 rounded-lg text-xs font-semibold cursor-pointer bg-emerald-600 text-white ${importing ? 'opacity-50 pointer-events-none' : ''}`}>
