@@ -1293,11 +1293,12 @@ export default function App() {
       // Bila header tidak ditemukan, jatuh ke posisi kolom lama (F = Part Unit, H = Base Unit).
       const kodeOf = (r) => str(pickVal(r, ['kode', 'kodebarang', 'kodematerial']));
       const partUnitOf = (r) => { const v = pickVal(r, ['partunit']); return str(v !== undefined ? v : colVal(r, 'F')); };
-      const baseUnitOf = (r) => { const v = pickVal(r, ['partunit1', 'baseunitofmeasure', 'baseunit', 'uom']); return str(v !== undefined ? v : colVal(r, 'H')); };
+      // Di aplikasi, kolom "Keterangan" Master Barang disimpan di field 'Base Unit of Measure' -> diisi dari kolom KETERANGAN Excel (G).
+      // Satuan diisi dari kolom PART UNIT kedua (H, mis. "Ea").
+      const baseUnitOf = (r) => { const v = pickVal(r, ['keterangan', 'baseunitofmeasure', 'baseunit']); return str(v !== undefined ? v : colVal(r, 'G')); };
       const satuanOf = (r) => {
-        const v = pickVal(r, ['satuan']);
-        if (v !== undefined && v !== null && String(v).trim() !== '') return String(v).trim();
-        return baseUnitOf(r);
+        const v = pickVal(r, ['satuan', 'partunit1', 'uom']);
+        return str(v !== undefined ? v : colVal(r, 'H'));
       };
       const namaOf = (r) => str(pickVal(r, ['namabarang', 'nama', 'description']));
       const nomorOf = (r) => str(pickVal(r, ['nomorbarang', 'materialnumber', 'partnumber']));
@@ -1333,7 +1334,9 @@ export default function App() {
         const upd = {};
         const sat = satuanOf(r); if (!ex.Satuan && sat) upd.Satuan = sat;
         const pu = partUnitOf(r); if (pu !== str(ex['Part Unit'])) upd['Part Unit'] = pu;
-        const bu = baseUnitOf(r); if (bu !== str(ex['Base Unit of Measure'])) upd['Base Unit of Measure'] = bu;
+        // Keterangan: isi dari Excel bila ada; bila Excel kosong, hapus isi lama yang keliru berupa satuan (mis. "Ea")
+        const bu = baseUnitOf(r); const exBu = str(ex['Base Unit of Measure']);
+        if (bu !== '' ? bu !== exBu : (exBu !== '' && exBu === str(ex.Satuan))) upd['Base Unit of Measure'] = bu;
         return Object.keys(upd).length ? { id, upd } : null;
       }).filter(Boolean);
 
