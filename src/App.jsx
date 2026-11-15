@@ -2251,7 +2251,7 @@ export default function App() {
               <div className="no-print p-4 rounded-xl border shadow-sm bg-yellow-50 border-yellow-300 flex flex-wrap gap-2 items-center justify-between">
                 <div>
                   <h3 className="font-bold text-sm text-slate-900 flex items-center gap-2"><ShoppingCart size={18} className="text-yellow-600" /> Form Purchase Order {editingPoId && <span className="text-[10px] bg-blue-600 text-white px-2 py-0.5 rounded-full">Mengedit arsip</span>}</h3>
-                  <p className="text-xs text-slate-600">Isi langsung pada lembar di bawah, simpan ke arsip, lalu cetak. Tabel tetap 12 baris (setengah A4 portrait, 210 × 148,5 mm). Seret mouse pada tabel untuk memblok sel (Ctrl+C / Ctrl+V / Delete bisa dipakai). Saat dicetak, tulisan &amp; garis formulir otomatis memutih; hanya isian yang tercetak hitam.</p>
+                  <p className="text-xs text-slate-600">Isi langsung pada lembar di bawah, lalu klik Simpan &amp; Cetak (PO yang dicetak otomatis tersimpan di arsip). Tabel tetap 12 baris (setengah A4 portrait, 210 × 148,5 mm). Seret mouse pada tabel untuk memblok sel (Ctrl+C / Ctrl+V / Delete bisa dipakai). Saat dicetak, tulisan &amp; garis formulir otomatis memutih; hanya isian yang tercetak hitam.</p>
                 </div>
                 <div className="w-full flex flex-wrap items-center gap-3 text-xs text-slate-700 border-t border-yellow-300 pt-2">
                   <span className="font-semibold">Geser posisi cetak (mm):</span>
@@ -2263,7 +2263,6 @@ export default function App() {
                   <button onClick={fillPoFromNeeded} className="bg-amber-500 hover:bg-amber-600 text-slate-950 px-3 py-2 rounded-lg text-xs font-bold flex items-center gap-1.5"><AlertTriangle size={14} /> Isi dari Barang Wajib Order ({poNeededItems.length})</button>
                   {canEdit && <button onClick={() => savePo(false)} disabled={saving} className="bg-emerald-600 hover:bg-emerald-700 disabled:opacity-60 text-white px-3 py-2 rounded-lg text-xs font-semibold flex items-center gap-1.5"><Save size={14} /> {editingPoId ? 'Perbarui Arsip' : 'Simpan ke Arsip'}</button>}
                   {canEdit && <button onClick={savePoAndPrint} disabled={saving} className="bg-blue-600 hover:bg-blue-700 disabled:opacity-60 text-white px-3 py-2 rounded-lg text-xs font-semibold flex items-center gap-1.5"><Printer size={14} /> Simpan &amp; Cetak</button>}
-                  <button onClick={() => window.print()} className="bg-white border border-blue-500 text-blue-700 hover:bg-blue-50 px-3 py-2 rounded-lg text-xs font-semibold flex items-center gap-1.5"><Printer size={14} /> Cetak Saja</button>
                   <button onClick={resetPoForm} className="bg-white border border-slate-300 text-slate-700 px-3 py-2 rounded-lg text-xs font-semibold flex items-center gap-1.5"><FilePlus2 size={14} /> Form Baru</button>
                 </div>
               </div>
