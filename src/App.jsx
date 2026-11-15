@@ -145,7 +145,7 @@ const makePoRows = (arr = []) => Array.from({ length: PO_ROWS }, (_, i) => {
   const it = arr[i] || {};
   return { id: Date.now() + Math.random() + i, no: it.no === undefined || it.no === null ? '' : String(it.no), uraian: it.uraian || '', partNumber: it.partNumber || '', qty: it.qty === undefined || it.qty === null ? '' : String(it.qty), unitPrice: it.unitPrice === undefined || it.unitPrice === null ? '' : String(it.unitPrice), keterangan: it.keterangan || '', ...(it.diterima ? { diterima: Number(it.diterima) } : {}) };
 });
-const newPoHeader = () => ({ noPo: '', equipment: '', kodeAlat: '', lokasi: 'Bontang', tanggal: todayISO(), diketahuiOleh: '', ttd1Nama: '', ttd1Jabatan: '', ttd2Nama: '', ttd2Jabatan: '', ttd3Nama: '', ttd3Jabatan: '' });
+const newPoHeader = () => ({ noPo: '', equipment: '', kodeAlat: '', lokasi: 'Bontang', tanggal: todayISO(), diketahuiOleh: '', ttd1Nama: 'Catur A.', ttd1Jabatan: 'Site Manager', ttd2Nama: 'Abd. Muttalib', ttd2Jabatan: 'Planner', ttd3Nama: 'Aliuddin', ttd3Jabatan: 'Logistic' });
 // Tanggal PO: 13-Nov-2026
 const poDateText = (iso) => { const p = dateParts(iso); return p ? `${String(p.d).padStart(2, '0')}-${MONTHS_ID[p.m - 1]}-${p.y}` : ''; };
 const poNumberValue = (s) => { const m = String(s || '').match(/(\d+)\s*$/); return m ? Number(m[1]) : 0; };
@@ -2324,7 +2324,7 @@ export default function App() {
                             style={{ padding: 0, position: 'relative', borderRight: c < PO_COLS.length - 1 ? `0.4mm solid ${INK}` : 'none' }}>
                             <input data-pocell={`${r}-${c}`} className={`po-input ${f === 'no' || f === 'qty' || f === 'unitPrice' ? 'text-center' : ''}`} style={{ display: 'block', height: '5.2mm', padding: '0 1.2mm', fontSize: '8.5pt', lineHeight: 1.1 }}
                               value={it[f]} onChange={(e) => updatePoItem(it.id, f, e.target.value)} onKeyDown={(e) => poNav(e, r, c)} onFocus={() => { if (!poDrag.current) setPoSel({ ar: r, ac: c, fr: r, fc: c }); }} />
-                            {c === PO_COLS.length - 1 && <button onClick={() => clearPoRow(it.id)} title="Kosongkan baris ini" className="no-print absolute p-1 rounded-md text-rose-600 bg-rose-50 hover:bg-rose-600 hover:text-white" style={{ right: '-34px', top: '0.2mm' }}><Trash2 size={13} /></button>}
+                            {c === PO_COLS.length - 1 && ['no', 'uraian', 'partNumber', 'qty', 'unitPrice', 'keterangan'].some((f) => String(it[f] ?? '').trim() !== '') && <button onClick={() => clearPoRow(it.id)} title="Kosongkan baris ini" className="no-print absolute p-1 rounded-md text-rose-600 bg-rose-50 hover:bg-rose-600 hover:text-white" style={{ right: '-34px', top: '0.2mm' }}><Trash2 size={13} /></button>}
                           </td>
                         ))}
                       </tr>
@@ -2338,8 +2338,8 @@ export default function App() {
                     <div key={k} className="absolute top-0" style={{ left: lf, width: w, textAlign: al }}>
                       <div className="po-static" style={{ height: '4mm', lineHeight: '4mm' }}>{label}</div>
                       <div style={{ height: '13mm' }} />
-                      <input data-sig={`0-${ci}`} onKeyDown={(e) => sigNav(e, 0, ci)} className="po-input po-ttd-name po-line border-b border-dotted font-bold" placeholder="Nama" style={{ height: '4.5mm', fontSize: '8.5pt', textAlign: al }} value={poHeader[k + 'Nama']} onChange={(e) => setPoHeader({ ...poHeader, [k + 'Nama']: e.target.value })} />
-                      <input data-sig={`1-${ci}`} onKeyDown={(e) => sigNav(e, 1, ci)} className="po-input" placeholder="Jabatan" style={{ height: '4mm', fontSize: '8pt', fontWeight: 600, textAlign: al }} value={poHeader[k + 'Jabatan']} onChange={(e) => setPoHeader({ ...poHeader, [k + 'Jabatan']: e.target.value })} />
+                      <input data-sig={`0-${ci}`} onKeyDown={(e) => sigNav(e, 0, ci)} className="po-input po-ttd-name po-line border-b border-dotted font-bold" placeholder="Nama" style={{ height: '4.5mm', fontSize: '8.5pt', textAlign: 'center' }} value={poHeader[k + 'Nama']} onChange={(e) => setPoHeader({ ...poHeader, [k + 'Nama']: e.target.value })} />
+                      <input data-sig={`1-${ci}`} onKeyDown={(e) => sigNav(e, 1, ci)} className="po-input" placeholder="Jabatan" style={{ height: '4mm', fontSize: '8pt', fontWeight: 600, textAlign: 'center' }} value={poHeader[k + 'Jabatan']} onChange={(e) => setPoHeader({ ...poHeader, [k + 'Jabatan']: e.target.value })} />
                     </div>
                   ))}
                 </div>
