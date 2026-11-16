@@ -106,7 +106,7 @@ const safeId = (kode) => String(kode).trim();
 
 // Peta nama kolom data lama -> kolom database (dipakai saat melengkapi data hasil impor)
 const MASUK_COLS = { 'Material Number': 'material_number', 'No. PO': 'no_po', 'No. Surat Jalan': 'no_surat_jalan', Satuan: 'satuan', 'Kekurangan Supply': 'kekurangan_supply', Keterangan: 'keterangan' };
-const KELUAR_COLS = { 'Nomor Barang': 'nomor_barang', 'No. WO': 'no_wo', HM_KM: 'hm_km', Keterangan: 'keterangan' };
+const KELUAR_COLS = { Merk: 'merk', 'Nomor Barang': 'nomor_barang', 'No. WO': 'no_wo', HM_KM: 'hm_km', Keterangan: 'keterangan' };
 const MATERIAL_COLS = { Satuan: 'satuan', 'Part Unit': 'part_unit', 'Base Unit of Measure': 'base_unit' };
 const colMap = (obj, map) => Object.fromEntries(Object.entries(obj).filter(([k]) => map[k]).map(([k, v]) => [map[k], map[k] === 'kekurangan_supply' ? (Number.isFinite(Number(v)) ? Number(v) : 0) : v]));
 // Jalankan banyak permintaan secara paralel per kelompok kecil; berhenti bila ada yang gagal
@@ -307,7 +307,7 @@ export default function App() {
 
   const emptyMaterial = { kode: '', nama: '', nomor: '', partUnit: '', merk: '', baseUnit: '', satuan: '', lokasi: 'Rak A1', minQty: 5, qty: 0 };
   const emptyMasuk = { tanggal: todayISO(), unit: '', kode: '', materialNumber: '', description: '', merk: '', qty: '', satuan: 'Pcs', noPo: '', suratJalan: '', kekurangan: '', keterangan: '' };
-  const emptyKeluar = { tanggal: todayISO(), unit: '', kode: '', nomorBarang: '', namaBarang: '', mekanik: '', noWo: '', hmKm: '', qty: '', keterangan: '' };
+  const emptyKeluar = { tanggal: todayISO(), unit: '', kode: '', nomorBarang: '', namaBarang: '', merk: '', mekanik: '', noWo: '', hmKm: '', qty: '', keterangan: '' };
   const [formMaterial, setFormMaterial] = useState(emptyMaterial);
   const [formMasuk, setFormMasuk] = useState(emptyMasuk);
   const [formKeluar, setFormKeluar] = useState(emptyKeluar);
@@ -503,7 +503,7 @@ export default function App() {
 
   const filteredMaterial = useMemo(() => dataMaterial.filter((i) => !q || has(i['Nama Barang']) || has(i.Kode) || has(i['Nomor Barang']) || has(i.Lokasi) || has(i['Part Unit']) || has(i.Merk) || has(i['Base Unit of Measure'])), [dataMaterial, q]); // eslint-disable-line
   const filteredMasuk = sortedMasuk.filter((i) => (!q || has(i.Description) || has(i.Kode) || has(i['No. PO']) || has(i.Unit) || has(i.Merk) || has(i['Material Number']) || has(i['No. Surat Jalan']) || has(i.Keterangan)) && matchesPeriod(i.Tanggal));
-  const filteredKeluar = sortedKeluar.filter((i) => (!q || has(i['Nama Barang']) || has(i.Kode) || has(i.Unit) || has(i.Mekanik) || has(i['No. WO']) || has(i['Nomor Barang'])) && matchesPeriod(i['Doc.Date']));
+  const filteredKeluar = sortedKeluar.filter((i) => (!q || has(i['Nama Barang']) || has(i.Kode) || has(i.Unit) || has(i.Mekanik) || has(i.Merk) || has(i['No. WO']) || has(i['Nomor Barang'])) && matchesPeriod(i['Doc.Date']));
 
   const poNeededItems = useMemo(() => dataMaterial.filter((i) => Number(i.Qty || 0) <= Number(i.MinQty ?? 5)), [dataMaterial]);
 
@@ -595,7 +595,7 @@ export default function App() {
     keluar: {
       tanggal: ['Tanggal', (i) => fmtDate(i['Doc.Date']), (i) => toISODate(i['Doc.Date'])], unit: ['Unit', (i) => i.Unit || ''], kode: ['Kode', (i) => i.Kode || ''],
       nomor: ['Material Number', (i) => String(i['Nomor Barang'] || materialByKode.get(kk(i))?.['Nomor Barang'] || '')],
-      nama: ['Nama Barang', (i) => i['Nama Barang'] || ''], mekanik: ['Mekanik', (i) => i.Mekanik || ''], wo: ['No. WO', (i) => i['No. WO'] || ''],
+      nama: ['Nama Barang', (i) => i['Nama Barang'] || ''], merk: ['Merk', (i) => i.Merk || materialByKode.get(kk(i))?.Merk || ''], mekanik: ['Mekanik', (i) => i.Mekanik || ''], wo: ['No. WO', (i) => i['No. WO'] || ''],
       hmkm: ['HM/KM', (i) => String(i.HM_KM ?? '')], ket: ['Keterangan', (i) => i.Keterangan || ''], qty: ['Qty', (i) => String(i.Qty ?? '')]
     },
     arsip: {
@@ -787,7 +787,7 @@ export default function App() {
   };
   const lookupKeluar = (kode) => {
     const found = materialByKode.get(String(kode).trim().toLowerCase());
-    setFormKeluar((p) => ({ ...p, kode, nomorBarang: found ? (found['Nomor Barang'] ?? '') : '', ...(found ? { namaBarang: found['Nama Barang'] || '' } : {}) }));
+    setFormKeluar((p) => ({ ...p, kode, nomorBarang: found ? (found['Nomor Barang'] ?? '') : '', merk: found ? (found.Merk || '') : '', ...(found ? { namaBarang: found['Nama Barang'] || '' } : {}) }));
   };
 
   const openEditMasuk = (item) => {
@@ -806,7 +806,7 @@ export default function App() {
     setFormKeluar({
       tanggal: toISODate(item['Doc.Date']) || todayISO(), unit: item.Unit || '', kode: item.Kode || '',
       nomorBarang: item['Nomor Barang'] || materialByKode.get(String(item.Kode || '').toLowerCase())?.['Nomor Barang'] || '',
-      namaBarang: item['Nama Barang'] || '', mekanik: item.Mekanik || '', noWo: item['No. WO'] || '', hmKm: String(item.HM_KM ?? ''),
+      namaBarang: item['Nama Barang'] || '', merk: item.Merk || materialByKode.get(String(item.Kode || '').toLowerCase())?.Merk || '', mekanik: item.Mekanik || '', noWo: item['No. WO'] || '', hmKm: String(item.HM_KM ?? ''),
       qty: String(item.Qty ?? ''), keterangan: item.Keterangan || ''
     });
     setShowModalKeluar(true);
@@ -867,7 +867,7 @@ export default function App() {
       const fields = {
         'Doc.Date': formKeluar.tanggal, Unit: formKeluar.unit.trim(), Kode: mat.Kode,
         'Nomor Barang': String(formKeluar.nomorBarang).trim(),
-        'Nama Barang': formKeluar.namaBarang.trim(), Mekanik: formKeluar.mekanik.trim(),
+        'Nama Barang': formKeluar.namaBarang.trim(), Merk: String(formKeluar.merk || '').trim(), Mekanik: formKeluar.mekanik.trim(),
         'No. WO': formKeluar.noWo.trim(), HM_KM: formKeluar.hmKm.trim(),
         Keterangan: formKeluar.keterangan.trim(), Qty: qty
       };
@@ -1436,6 +1436,7 @@ export default function App() {
 
       // 3) BARANG KELUAR
       const keluarFields = (r) => clean({
+        Merk: str(pickVal(r, ['merk', 'brand'])) || undefined,
         'Nomor Barang': str(pickVal(r, ['nomorbarang', 'materialnumber', 'partnumber', 'partno', 'nobarang'])) || undefined,
         'No. WO': str(pickVal(r, ['nowo', 'nomorwo', 'wo', 'workorder', 'noworkorder'])) || undefined,
         HM_KM: str(pickVal(r, ['hmkm', 'hmkmunit', 'hm', 'km', 'hourmeter'])) || undefined,
@@ -2290,20 +2291,20 @@ export default function App() {
             <div className="space-y-4">
               {dataRangeBar('Hanya transaksi dalam rentang ini yang tampil. Pilih "Semua data" untuk riwayat lama.')}
               {PeriodFilter()}
-              {SearchBox({ placeholder: "Cari kode, nama barang, unit, atau mekanik..." })}
+              {SearchBox({ placeholder: "Cari kode, nama barang, merk, unit, atau mekanik..." })}
               {cfBar('keluar')}
               <div className={`rounded-xl shadow-sm border overflow-x-auto ${card}`}>
-                <table className="w-full min-w-[1200px] text-left text-sm">
+                <table className="w-full min-w-[1300px] text-left text-sm">
                   <thead className={`border-b font-semibold leading-tight ${thead}`}>
                     <tr>
                       {TH('keluar','tanggal','TANGGAL','p-3')}{TH('keluar','unit','UNIT','p-3')}{TH('keluar','kode','KODE','p-3')}
-                      {TH('keluar','nomor',<>MATERIAL<br />NUMBER</>,'p-3')}{TH('keluar','nama','NAMA BARANG','p-3')}{TH('keluar','mekanik','MEKANIK','p-3')}
+                      {TH('keluar','nomor',<>MATERIAL<br />NUMBER</>,'p-3')}{TH('keluar','nama','NAMA BARANG','p-3')}{TH('keluar','merk','MERK','p-3')}{TH('keluar','mekanik','MEKANIK','p-3')}
                       {TH('keluar','wo','NO. WO','p-3')}{TH('keluar','hmkm','HM/KM','p-3')}{TH('keluar','ket','KETERANGAN','p-3')}{TH('keluar','qty','QTY','p-3')}
                       {canEdit && <th className="p-3 text-center">AKSI</th>}
                     </tr>
                   </thead>
                   <tbody className={`divide-y ${divide}`}>
-                    {keluarRows.length === 0 ? <tr><td colSpan="11" className="p-8 text-center text-slate-400">Tidak ada transaksi.</td></tr> : paged(keluarRows).map((item) => {
+                    {keluarRows.length === 0 ? <tr><td colSpan="12" className="p-8 text-center text-slate-400">Tidak ada transaksi.</td></tr> : paged(keluarRows).map((item) => {
                       const noBrg = item['Nomor Barang'] || materialByKode.get(String(item.Kode || '').toLowerCase())?.['Nomor Barang'] || '';
                       return (
                         <tr key={item.id} className={hoverRow}>
@@ -2312,6 +2313,7 @@ export default function App() {
                           <td className="p-3 text-center align-middle font-mono">{item.Kode}</td>
                           <td className="p-3 text-center align-middle max-w-[9rem] break-words">{noBrg}</td>
                           <td className="p-3 text-left align-middle max-w-[16rem] break-words">{item['Nama Barang']}</td>
+                          <td className="p-3 text-left align-middle max-w-[8rem] break-words">{item.Merk || materialByKode.get(String(item.Kode || '').toLowerCase())?.Merk || ''}</td>
                           <td className="p-3 text-left align-middle max-w-[8rem] break-words">{item.Mekanik}</td>
                           <td className="p-3 text-center align-middle max-w-[8rem] break-words">{item['No. WO']}</td>
                           <td className="p-3 text-center align-middle max-w-[7rem] break-words">{item.HM_KM}</td>
@@ -2930,7 +2932,10 @@ export default function App() {
               <Field label="Unit"><input type="text" required className={inputClass} value={formKeluar.unit} onChange={(e) => setFormKeluar({ ...formKeluar, unit: e.target.value })} placeholder="REP 110" /></Field>
               <Field label="Material Number (otomatis)"><input type="text" readOnly tabIndex={-1} className={`${inputClass} bg-slate-100 font-bold`} value={formKeluar.nomorBarang} placeholder="Terisi setelah kode diinput" /></Field>
             </div>
-            <Field label="Nama Barang"><input type="text" required className={inputClass} value={formKeluar.namaBarang} onChange={(e) => setFormKeluar({ ...formKeluar, namaBarang: e.target.value })} /></Field>
+            <div className="grid grid-cols-3 gap-2">
+              <Field label="Nama Barang" className="col-span-2"><input type="text" required className={inputClass} value={formKeluar.namaBarang} onChange={(e) => setFormKeluar({ ...formKeluar, namaBarang: e.target.value })} /></Field>
+              <Field label="Merk"><input type="text" className={inputClass} value={formKeluar.merk} onChange={(e) => setFormKeluar({ ...formKeluar, merk: e.target.value })} placeholder="Terisi dari Master" /></Field>
+            </div>
             <div className="grid grid-cols-3 gap-2">
               <Field label="Mekanik"><input type="text" className={inputClass} value={formKeluar.mekanik} onChange={(e) => setFormKeluar({ ...formKeluar, mekanik: e.target.value })} placeholder="Endang" /></Field>
               <Field label="Nomor WO"><input type="text" className={inputClass} value={formKeluar.noWo} onChange={(e) => setFormKeluar({ ...formKeluar, noWo: e.target.value })} /></Field>

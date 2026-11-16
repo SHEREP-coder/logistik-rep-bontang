@@ -63,13 +63,13 @@ export const masukToRow = (f) => ({
 
 export const keluarFromRow = (r) => ({
   id: String(r.id), 'Doc.Date': nz(r.doc_date), Periode: r.doc_date ? String(r.doc_date).slice(0, 7) : 'Tanpa-Tanggal',
-  Unit: nz(r.unit), Kode: r.kode, 'Nomor Barang': nz(r.nomor_barang), 'Nama Barang': nz(r.nama_barang),
+  Unit: nz(r.unit), Kode: r.kode, 'Nomor Barang': nz(r.nomor_barang), 'Nama Barang': nz(r.nama_barang), Merk: nz(r.merk),
   Mekanik: nz(r.mekanik), 'No. WO': nz(r.no_wo), HM_KM: nz(r.hm_km), Keterangan: nz(r.keterangan), Qty: num(r.qty)
 });
 
 export const keluarToRow = (f) => ({
   doc_date: f['Doc.Date'] || null, unit: f.Unit ?? null, kode: f.Kode, nomor_barang: f['Nomor Barang'] ?? null,
-  nama_barang: f['Nama Barang'] ?? null, mekanik: f.Mekanik ?? null, no_wo: f['No. WO'] ?? null,
+  nama_barang: f['Nama Barang'] ?? null, merk: f.Merk ?? null, mekanik: f.Mekanik ?? null, no_wo: f['No. WO'] ?? null,
   hm_km: f.HM_KM ?? null, keterangan: f.Keterangan ?? null, qty: num(f.Qty)
 });
 
