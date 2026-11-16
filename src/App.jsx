@@ -1470,6 +1470,55 @@ export default function App() {
     } catch (err) { notify('Gagal: ' + err.message, 'error'); }
   };
 
+  // Perbarui STOK barang di Master Barang mengikuti kolom STOK sheet MATERIAL di Excel.
+  // Hanya mengubah stok barang yang sudah ada (barang baru tidak ditambah, data lain tidak diubah). Sel STOK kosong dilewati.
+  const syncStokFromFile = async (file) => {
+    if (!file) return;
+    if (!isAdmin) return notify('Hanya Admin yang dapat memperbarui stok.', 'error');
+    setImporting(true); setImportMsg('Membaca file...');
+    try {
+      const wb = XLSX.read(await file.arrayBuffer(), { type: 'array' });
+      const rows = sheetRows(wb, 'MATERIAL');
+      if (!rows.length) throw new Error('Sheet MATERIAL tidak ditemukan atau kosong.');
+      const byId = new Map(dataMaterial.map((m) => [m.id, m]));
+      const seen = new Set(); const changes = [];
+      let kosong = 0; let nonAngka = 0; let tidakAda = 0; let sama = 0; let berkode = 0;
+      rows.forEach((r) => {
+        const kode = String(pickVal(r, ['kode', 'kodebarang', 'kodematerial']) ?? '').trim();
+        if (!kode || seen.has(kode)) return;
+        seen.add(kode); berkode += 1;
+        const raw = pickVal(r, ['stok', 'stock', 'qty']);
+        if (raw === undefined || raw === null || String(raw).trim() === '') { kosong += 1; return; }
+        const qty = Number(String(raw).replace(',', '.'));
+        if (!Number.isFinite(qty)) { nonAngka += 1; return; }
+        const m = byId.get(safeId(kode));
+        if (!m) { tidakAda += 1; return; }
+        if (qty === Number(m.Qty || 0)) { sama += 1; return; }
+        changes.push({ kode: m.Kode, qty, lama: Number(m.Qty || 0) });
+      });
+      const ringkas = `Barang berkode di Excel: ${berkode}\n• Stok akan diubah: ${changes.length}\n• Sudah sama: ${sama}\n• STOK kosong (dilewati): ${kosong}\n• STOK bukan angka (dilewati): ${nonAngka}\n• Kode belum ada di database (dilewati): ${tidakAda}`;
+      if (changes.length === 0) { setImportMsg('Tidak ada stok yang perlu diubah.\n' + ringkas); return; }
+      const contoh = changes.slice(0, 5).map((x) => `${x.kode}: ${x.lama} → ${x.qty}`).join('\n');
+      if (!window.confirm(`Perbarui stok ${changes.length} barang sesuai Excel?\n\n${ringkas}\n\nContoh:\n${contoh}\n\nStok yang ada saat ini akan diganti.`)) { setImportMsg('Dibatalkan.'); return; }
+      let done = 0;
+      for (const part of chunkArr(changes, 1000)) {
+        const { error } = await supabase.rpc('set_stok_massal', { p_items: part.map((x) => ({ kode: x.kode, qty: x.qty })) });
+        if (error) throw error;
+        done += part.length;
+        setImportMsg(`Memperbarui stok... ${done}/${changes.length}`);
+      }
+      await refreshTable('materials');
+      setImportMsg(`Selesai. Stok ${changes.length} barang diperbarui sesuai Excel.\n` + ringkas);
+      notify('Stok berhasil diperbarui dari Excel.');
+    } catch (err) {
+      console.error(err);
+      const m = 'Gagal memperbarui stok: ' + pgMessage(err);
+      setImportMsg(m); notify(m, 'error');
+    } finally {
+      setImporting(false);
+    }
+  };
+
   const recalcStock = async () => {
     if (!isAdmin) return notify('Hanya Admin.', 'error');
     if (!isFullData) return notify('Operasi ini butuh seluruh data transaksi. Ubah "Rentang data" menjadi "Semua data" (kotak di atas Dashboard) lalu ulangi.', 'error');
@@ -2641,6 +2690,20 @@ export default function App() {
                       <input type="file" accept=".xlsx,.xls" className="hidden" onChange={(e) => { importFromFile(e.target.files?.[0]); e.target.value = ''; }} />
                     </label>
                     <button disabled={importing} onClick={importFromPublic} className="px-3 py-2 rounded-lg text-xs font-semibold border border-slate-300 bg-white text-slate-700 disabled:opacity-50">Impor dari file bawaan (public)</button>
+                  </div>
+                  {importMsg && <p className="text-xs font-semibold text-blue-600 whitespace-pre-line break-words">{importMsg}</p>}
+                </div>
+              )}
+
+              {isAdmin && (
+                <div className={`p-6 rounded-xl border shadow-sm space-y-3 ${card}`}>
+                  <h3 className="font-bold text-sm border-b pb-2 flex items-center gap-2"><Upload size={16} /> Perbarui Stok dari Excel</h3>
+                  <p className="text-xs text-slate-400">Membaca kolom <b>STOK</b> di sheet <b>MATERIAL</b> lalu mengganti stok barang yang <b>sudah ada</b> di Master Barang (dicocokkan lewat Kode). Barang baru tidak ditambahkan, data lain tidak diubah, dan sel STOK yang kosong dilewati. Anda akan diminta konfirmasi sebelum stok diubah.</p>
+                  <div className="flex flex-wrap gap-2 items-center">
+                    <label className={`px-3 py-2 rounded-lg text-xs font-semibold cursor-pointer bg-amber-500 text-slate-950 ${importing ? 'opacity-50 pointer-events-none' : ''}`}>
+                      Pilih File .xlsx untuk Perbarui Stok
+                      <input type="file" accept=".xlsx,.xls" className="hidden" onChange={(e) => { syncStokFromFile(e.target.files?.[0]); e.target.value = ''; }} />
+                    </label>
                   </div>
                   {importMsg && <p className="text-xs font-semibold text-blue-600 whitespace-pre-line break-words">{importMsg}</p>}
                 </div>
