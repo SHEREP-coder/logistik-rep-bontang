@@ -150,6 +150,11 @@ const fmtDate = (v) => {
 
 const PO_ROWS = 12;
 const PO_COLS = ['no', 'uraian', 'partNumber', 'qty', 'unitPrice', 'keterangan'];
+// Baris PO dianggap "barang" bila Uraian atau Part Number berisi huruf/angka (kosong atau hanya tanda "-" bukan barang)
+const hasText = (v) => /[a-z0-9]/i.test(String(v || ''));
+const isPoItemRow = (it) => hasText(it.uraian) || hasText(it.partNumber);
+// Baris yang berisi sesuatu di kolom mana pun (termasuk yang hanya Keterangan)
+const poRowHasContent = (it) => PO_COLS.some((k) => String(it[k] ?? '').trim() !== '');
 const makePoRows = (arr = []) => Array.from({ length: PO_ROWS }, (_, i) => {
   const it = arr[i] || {};
   return { id: Date.now() + Math.random() + i, no: it.no === undefined || it.no === null ? '' : String(it.no), uraian: it.uraian || '', partNumber: it.partNumber || '', qty: it.qty === undefined || it.qty === null ? '' : String(it.qty), unitPrice: it.unitPrice === undefined || it.unitPrice === null ? '' : String(it.unitPrice), keterangan: it.keterangan || '', ...(it.diterima ? { diterima: Number(it.diterima) } : {}) };
@@ -596,7 +601,7 @@ export default function App() {
     arsip: {
       nopo: ['No. PO', (p) => p.noPo || ''], tanggal: ['Tanggal', (p) => fmtDate(p.tanggal), (p) => toISODate(p.tanggal)],
       equipment: ['Equipment', (p) => p.equipment || ''], kodealat: ['Kode Alat', (p) => p.kodeAlat || ''],
-      jml: ['Jml Item', (p) => String((p.items || []).length)], dibuat: ['Dibuat Oleh', (p) => p.dibuatOleh || '']
+      jml: ['Jml Item', (p) => String((p.items || []).filter(isPoItemRow).length)], dibuat: ['Dibuat Oleh', (p) => p.dibuatOleh || '']
     }
   };
   const cfBase = { master: filteredMaterial, rekap: filteredMaterial, opname: filteredMaterial, masuk: filteredMasuk, keluar: filteredKeluar, arsip: [] };
@@ -1084,8 +1089,12 @@ export default function App() {
   const savePo = async (keep = false) => {
     const fail = (m) => { notify(m, 'error'); return false; };
     if (!canEdit) return fail('Akses ditolak!');
-    const items = poItems.filter((i) => i.uraian.trim() || i.partNumber.trim());
-    if (items.length === 0) return fail('Isi minimal satu baris barang.');
+    // Simpan semua baris sampai baris terakhir yang berisi (termasuk baris yang hanya berisi Keterangan),
+    // supaya posisi baris tetap sama seperti di lembar PO
+    let lastFilled = -1;
+    poItems.forEach((it, i) => { if (poRowHasContent(it)) lastFilled = i; });
+    const items = poItems.slice(0, lastFilled + 1);
+    if (!items.some(isPoItemRow)) return fail('Isi minimal satu baris barang.');
     if (!poHeader.noPo.trim()) return fail('Nomor PO wajib diisi.');
     if (riwayatPo.some((p) => p.noPo === poHeader.noPo.trim() && p.id !== editingPoId)) return fail('Nomor PO sudah dipakai di arsip.');
     setSaving(true);
@@ -1112,7 +1121,7 @@ export default function App() {
   };
   const savePoAndPrint = () => {
     if (!canEdit) return notify('Akses ditolak!', 'error');
-    if (!poItems.some((i) => i.uraian.trim() || i.partNumber.trim())) return notify('Isi minimal satu baris barang.', 'error');
+    if (!poItems.some(isPoItemRow)) return notify('Isi minimal satu baris barang.', 'error');
     if (!poHeader.noPo.trim()) return notify('Nomor PO wajib diisi.', 'error');
     if (riwayatPo.some((p) => p.noPo === poHeader.noPo.trim() && p.id !== editingPoId)) return notify('Nomor PO sudah dipakai di arsip.', 'error');
     savePo(true);
@@ -1122,7 +1131,7 @@ export default function App() {
   // Cocokkan baris PO ke Master Barang: lewat Kode; bila lewat Material Number dan ada beberapa barang dengan nomor sama, pilih yang NAMA-nya sama dengan uraian (bila tidak ada yang cocok, kosongkan agar dipilih manual)
   const matchMat = (it) => {
     const pn = String(it.partNumber || '').trim().toLowerCase();
-    if (!pn) return null;
+    if (!hasText(pn)) return null;
     const byKode = materialByKode.get(pn);
     if (byKode) return byKode;
     const list = materialsByNomor.get(pn) || [];
@@ -1139,7 +1148,7 @@ export default function App() {
   };
   const openTerima = (po) => {
     setTerimaPo(po);
-    setTerimaForm({ tanggal: todayISO(), suratJalan: '', unit: '', tutup: !!po.ditutup, rows: (po.items || []).map((it) => ({ kode: matchMat(it)?.Kode || '', qtyNow: '', ket: '' })) });
+    setTerimaForm({ tanggal: todayISO(), suratJalan: '', unit: '', tutup: !!po.ditutup, rows: (po.items || []).map((it) => ({ kode: isPoItemRow(it) ? (matchMat(it)?.Kode || '') : '', qtyNow: '', ket: '' })) });
   };
   const closeTerima = () => { setTerimaPo(null); setTerimaForm(null); };
   const setTerimaRow = (i, patch) => setTerimaForm((f) => ({ ...f, rows: f.rows.map((r, k) => (k === i ? { ...r, ...patch } : r)) }));
@@ -2455,7 +2464,7 @@ export default function App() {
                         <tr key={po.id} className={hoverRow}>
                           <td className="p-3.5 font-bold text-red-600">{po.noPo}</td><td className="p-3.5">{fmtDate(po.tanggal)}</td>
                           <td className="p-3.5">{po.equipment}</td><td className="p-3.5">{po.kodeAlat}</td>
-                          <td className="p-3.5 text-center font-bold">{(po.items || []).length}</td><td className="p-3.5">{po.dibuatOleh}</td>
+                          <td className="p-3.5 text-center font-bold">{(po.items || []).filter(isPoItemRow).length}</td><td className="p-3.5">{po.dibuatOleh}</td>
                           <td className="p-3.5 text-center align-middle">{(() => { const rc = poRecv(po); const cls = rc.status === 'Lengkap' ? 'bg-emerald-100 text-emerald-800' : rc.status === 'Sebagian' ? 'bg-amber-100 text-amber-800' : rc.status === 'Ditutup' ? 'bg-blue-100 text-blue-800' : 'bg-slate-200 text-slate-700'; return <span className={`px-2.5 py-1 rounded-full font-bold text-[10px] whitespace-nowrap ${cls}`}>{rc.status}{rc.n > 0 && rc.status !== 'Belum' ? ` ${rc.done}/${rc.n}` : ''}</span>; })()}</td>
                           <td className="p-3.5 text-center whitespace-nowrap">
                             {canEdit && poRecv(po).status !== 'Lengkap' && <button onClick={() => openTerima(po)} className="px-2.5 py-1 bg-emerald-600 text-white rounded-lg font-semibold mr-1 inline-flex items-center gap-1"><ArrowDownToLine size={12} /> Terima Barang</button>}
@@ -2952,6 +2961,7 @@ export default function App() {
                 <thead className={`border-b font-semibold ${thead}`}><tr><th className="p-2">NO</th><th className="p-2">URAIAN / PART NUMBER</th><th className="p-2">KODE (Master Barang)</th><th className="p-2">DIPESAN</th><th className="p-2">SUDAH DITERIMA</th><th className="p-2">SISA</th><th className="p-2">DITERIMA SEKARANG</th><th className="p-2">KETERANGAN</th></tr></thead>
                 <tbody className={`divide-y ${divide}`}>
                   {(terimaPo.items || []).map((it, i) => {
+                    if (!isPoItemRow(it)) return null; // baris catatan (mis. hanya Keterangan) tidak diterima sebagai barang
                     const ord = qtyNum(it.qty) || 0; const got = Number(it.diterima) || 0; const sisa = Math.max(0, ord - got);
                     const r = terimaForm.rows[i];
                     const mat = r.kode.trim() ? materialByKode.get(r.kode.trim().toLowerCase()) : null;
