@@ -950,7 +950,9 @@ export default function App() {
   // Dari Master Barang: masukkan barang ke baris kosong pertama Form PO (hanya Uraian + Material Number; Qty, Unit Price, Keterangan diisi manual)
   const addToPo = (m) => {
     const pn = String(m['Nomor Barang'] || m.Kode || '');
-    if (poItems.some((i) => pn && i.partNumber.trim().toLowerCase() === pn.toLowerCase())) return notify(`"${m['Nama Barang'] || pn}" sudah ada di Form PO.`, 'error');
+    // Dianggap sudah ada hanya bila Material Number DAN nama barang sama (beberapa barang berbeda bisa memakai Material Number yang sama)
+    const namaM = String(m['Nama Barang'] || '').trim().toLowerCase();
+    if (poItems.some((i) => pn && i.partNumber.trim().toLowerCase() === pn.toLowerCase() && i.uraian.trim().toLowerCase() === namaM)) return notify(`"${m['Nama Barang'] || pn}" sudah ada di Form PO.`, 'error');
     const idx = poItems.findIndex((i) => !i.uraian.trim() && !i.partNumber.trim());
     if (idx === -1) return notify(`Form PO sudah penuh (${PO_ROWS} baris). Cetak/simpan dulu atau kosongkan baris.`, 'error');
     const mx = poItems.reduce((a, x) => (Number(x.no) > a ? Number(x.no) : a), 0);
