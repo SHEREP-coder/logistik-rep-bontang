@@ -19,7 +19,16 @@ const PO_KANTOR = 'BALIKPAPAN'; // tulisan di bawah nama PT pada blangko PO
 const MONTHS_ID = ['Jan', 'Feb', 'Mar', 'Apr', 'Mei', 'Jun', 'Jul', 'Agu', 'Sep', 'Okt', 'Nov', 'Des'];
 const INK = '#1e3a5f';
 // Pengaturan geser SAAT CETAK (satuan 'ch' = lebar 1 angka; negatif = ke kiri, positif = ke kanan). Ubah di sini bila perlu disetel ulang.
-const PO_SHIFT = { no: -2, uraian: -1, qty: -4, keterangan: 2 };
+const PO_SHIFT = { no: -2, uraian: -1, qty: 0, keterangan: 2 };
+// Part Number: bila teks tidak muat satu baris di kolom (36 mm), tampil 2 baris dengan huruf sedikit lebih kecil agar tetap muat di tinggi baris 5,2 mm
+let _poCtx = null;
+const poFitsOneLine = (text, pt, maxMm) => {
+  try {
+    if (!_poCtx) _poCtx = document.createElement('canvas').getContext('2d');
+    _poCtx.font = `${pt}pt Arial, Helvetica, sans-serif`;
+    return (_poCtx.measureText(String(text)).width * 25.4) / 96 <= maxMm;
+  } catch (e) { return String(text).length <= 22; }
+};
 // Isian Equipment/Kode Alat/Lokasi/Tanggal saat cetak: naik 2 baris (1 baris = 4,2 mm); jarak baris 1 -> baris berikutnya 1,5
 const PO_HDR_UP = 2; const PO_LINE_MM = 4.2; const PO_HDR_GAPS = [0, 0.75, 1, 1.25]; // koreksi baris per isian (Equipment, Kode Alat, Lokasi, Tanggal); positif = turun, negatif = naik
 const PO_HDR_LEFT = -3; // isian header digeser 5 angka ke kiri saat cetak
@@ -1892,7 +1901,7 @@ export default function App() {
           #po-sheet img.po-static { opacity: 0 !important; }
           #po-sheet .po-line { border-color: #fff !important; }
           #po-sheet .po-sel { background: transparent !important; }
-          #po-sheet input, #po-sheet .po-val { color: #000 !important; background: transparent !important; }
+          #po-sheet input, #po-sheet textarea, #po-sheet .po-val { color: #000 !important; background: transparent !important; }
           #po-sheet input.po-nopo { color: #fff !important; }
           #po-sheet input.po-ttd-name { text-decoration: underline; text-decoration-thickness: 0.2mm; text-underline-offset: 0.6mm; }
           #po-sheet td.po-col-0 input { transform: translateX(${PO_SHIFT.no}ch); }
@@ -2373,8 +2382,19 @@ export default function App() {
                         {PO_COLS.map((f, c) => (
                           <td key={f} data-cell className={`po-line po-col-${c} ${poInSel(r, c) ? 'po-sel' : ''}`} onMouseDown={(e) => poCellDown(e, r, c)} onMouseEnter={() => poCellEnter(r, c)}
                             style={{ padding: 0, position: 'relative', borderRight: c < PO_COLS.length - 1 ? `0.4mm solid ${INK}` : 'none' }}>
-                            <input data-pocell={`${r}-${c}`} className={`po-input ${f === 'no' || f === 'qty' || f === 'unitPrice' ? 'text-center' : ''}`} style={{ display: 'block', height: '5.2mm', padding: '0 1.2mm', fontSize: '8.5pt', lineHeight: 1.1 }}
-                              value={it[f]} onChange={(e) => updatePoItem(it.id, f, e.target.value)} onKeyDown={(e) => poNav(e, r, c)} onFocus={() => { if (!poDrag.current) setPoSel({ ar: r, ac: c, fr: r, fc: c }); }} />
+                            {f === 'partNumber' ? (() => {
+                              const one = poFitsOneLine(it[f], 8.5, 33);
+                              return (
+                                <textarea data-pocell={`${r}-${c}`} rows={1} className="po-input" spellCheck={false}
+                                  style={{ display: 'block', height: '5.2mm', boxSizing: 'border-box', resize: 'none', overflow: 'hidden', border: 0, margin: 0, fontFamily: 'inherit', textAlign: 'left', padding: one ? '0.95mm 1.2mm 0' : '0.1mm 1.2mm 0', fontSize: one ? '8.5pt' : '7pt', lineHeight: one ? '3.3mm' : '2.5mm' }}
+                                  value={it[f]} onChange={(e) => updatePoItem(it.id, f, e.target.value.replace(/\s*[\r\n]+\s*/g, ' '))}
+                                  onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); return; } poNav(e, r, c); }}
+                                  onFocus={() => { if (!poDrag.current) setPoSel({ ar: r, ac: c, fr: r, fc: c }); }} />
+                              );
+                            })() : (
+                              <input data-pocell={`${r}-${c}`} className={`po-input ${f === 'no' ? 'text-center' : ''}`} style={{ display: 'block', height: '5.2mm', padding: f === 'keterangan' ? '0 1.2mm 0 2.9mm' : '0 1.2mm', fontSize: '8.5pt', lineHeight: 1.1, textAlign: f === 'no' ? 'center' : 'left' }}
+                                value={it[f]} onChange={(e) => updatePoItem(it.id, f, e.target.value)} onKeyDown={(e) => poNav(e, r, c)} onFocus={() => { if (!poDrag.current) setPoSel({ ar: r, ac: c, fr: r, fc: c }); }} />
+                            )}
                             {c === PO_COLS.length - 1 && ['no', 'uraian', 'partNumber', 'qty', 'unitPrice', 'keterangan'].some((f) => String(it[f] ?? '').trim() !== '') && <button onClick={() => clearPoRow(it.id)} title="Kosongkan baris ini" className="no-print absolute p-1 rounded-md text-rose-600 bg-rose-50 hover:bg-rose-600 hover:text-white" style={{ right: '-34px', top: '0.2mm' }}><Trash2 size={13} /></button>}
                           </td>
                         ))}
