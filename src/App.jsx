@@ -560,7 +560,7 @@ export default function App() {
     },
     opname: {
       kode: ['Kode', (i) => i.Kode || ''], nama: ['Nama Barang', (i) => i['Nama Barang'] || ''],
-      nomor: ['Material Number', (i) => String(i['Nomor Barang'] ?? '')], lokasi: ['Lokasi', (i) => i.Lokasi || 'Rak A1'],
+      nomor: ['Material Number', (i) => String(i['Nomor Barang'] ?? '')], part: ['Part Unit', (i) => i['Part Unit'] || ''], lokasi: ['Lokasi', (i) => i.Lokasi || 'Rak A1'],
       sistem: ['Sistem', (i) => String(Number(i.Qty) || 0)],
       selisih: ['Selisih', (i) => { const sys = Number(i.Qty) || 0; const raw = physicalStocks[i.id]; const ph = raw === undefined || raw === '' ? sys : Number(raw); return ph - sys === 0 ? 'Sesuai' : 'Ada selisih'; }]
     },
@@ -2444,9 +2444,9 @@ export default function App() {
               {SearchBox({ placeholder: "Cari kode, nama barang, material number, atau lokasi..." })}
               {cfBar('opname')}
               <div className={`rounded-xl shadow-sm border overflow-x-auto ${card}`}>
-                <table className="w-full min-w-[860px] text-left text-sm">
+                <table className="w-full min-w-[960px] text-left text-sm">
                   <thead className={`border-b font-semibold ${thead}`}>
-                    <tr>{TH('opname','kode','KODE','p-3.5 text-center')}{TH('opname','nama','NAMA BARANG','p-3.5 text-center')}{TH('opname','nomor',<>MATERIAL<br />NUMBER</>,'p-3.5 text-center')}{TH('opname','lokasi','LOKASI','p-3.5 text-center')}{TH('opname','sistem','SISTEM','p-3.5 text-center')}<th className="p-3.5 text-center">FISIK</th>{TH('opname','selisih','SELISIH','p-3.5 text-center')}</tr>
+                    <tr>{TH('opname','kode','KODE','p-3.5 text-center')}{TH('opname','nama','NAMA BARANG','p-3.5 text-center')}{TH('opname','nomor',<>MATERIAL<br />NUMBER</>,'p-3.5 text-center')}{TH('opname','part','PART UNIT','p-3.5 text-center')}{TH('opname','lokasi','LOKASI','p-3.5 text-center')}{TH('opname','sistem','SISTEM','p-3.5 text-center')}<th className="p-3.5 text-center">FISIK</th>{TH('opname','selisih','SELISIH','p-3.5 text-center')}</tr>
                   </thead>
                   <tbody className={`divide-y ${divide}`}>
                     {paged(opnameRows).map((item) => {
@@ -2458,6 +2458,7 @@ export default function App() {
                         <tr key={item.id}>
                           <td className="p-3.5 text-center align-middle font-mono font-bold">{item.Kode}</td><td className="p-3.5">{item['Nama Barang']}</td>
                           <td className="p-3.5 text-center align-middle break-words">{item['Nomor Barang'] ?? '-'}</td>
+                          <td className="p-3.5 text-center align-middle font-semibold">{item['Part Unit'] || '-'}</td>
                           <td className="p-3.5 text-center align-middle font-semibold text-blue-600">{item.Lokasi || 'Rak A1'}</td>
                           <td className="p-3.5 text-center align-middle font-bold text-blue-600">{sys}</td>
                           <td className="p-3.5 text-center align-middle"><input type="number" min="0" disabled={!canEdit} className="w-20 p-1 text-center border rounded font-bold bg-white text-slate-900" value={raw === undefined ? sys : raw} onChange={(e) => setPhysicalStocks({ ...physicalStocks, [item.id]: e.target.value })} /></td>
