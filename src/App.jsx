@@ -474,6 +474,12 @@ export default function App() {
     dataMaterial.forEach((x) => { const n = String(x['Nomor Barang'] ?? '').trim().toLowerCase(); if (n && !m.has(n)) m.set(n, x); });
     return m;
   }, [dataMaterial]);
+  // Beberapa barang berbeda bisa memakai Material Number yang sama -> simpan semuanya, pilih yang namanya cocok
+  const materialsByNomor = useMemo(() => {
+    const m = new Map();
+    dataMaterial.forEach((x) => { const n = String(x['Nomor Barang'] ?? '').trim().toLowerCase(); if (n) { if (!m.has(n)) m.set(n, []); m.get(n).push(x); } });
+    return m;
+  }, [dataMaterial]);
 
   const sortedMasuk = useMemo(() => [...dataMasuk].sort((a, b) => toISODate(b.Tanggal).localeCompare(toISODate(a.Tanggal))), [dataMasuk]);
   const sortedKeluar = useMemo(() => [...dataKeluar].sort((a, b) => toISODate(b['Doc.Date']).localeCompare(toISODate(a['Doc.Date']))), [dataKeluar]);
@@ -1113,7 +1119,17 @@ export default function App() {
     window.print();
   };
   /* ---------- PENERIMAAN BARANG DARI PO (Arsip Database PO -> Stok Masuk otomatis) ---------- */
-  const matchMat = (it) => { const pn = String(it.partNumber || '').trim().toLowerCase(); return pn ? (materialByKode.get(pn) || materialByNomor.get(pn) || null) : null; };
+  // Cocokkan baris PO ke Master Barang: lewat Kode; bila lewat Material Number dan ada beberapa barang dengan nomor sama, pilih yang NAMA-nya sama dengan uraian (bila tidak ada yang cocok, kosongkan agar dipilih manual)
+  const matchMat = (it) => {
+    const pn = String(it.partNumber || '').trim().toLowerCase();
+    if (!pn) return null;
+    const byKode = materialByKode.get(pn);
+    if (byKode) return byKode;
+    const list = materialsByNomor.get(pn) || [];
+    if (list.length <= 1) return list[0] || null;
+    const nama = String(it.uraian || '').trim().toLowerCase();
+    return list.find((x) => String(x['Nama Barang'] || '').trim().toLowerCase() === nama) || null;
+  };
   const poRecv = (po) => {
     const items = (po.items || []).filter((i) => qtyNum(i.qty) > 0);
     const done = items.filter((i) => Number(i.diterima || 0) >= qtyNum(i.qty)).length;
