@@ -1148,7 +1148,21 @@ export default function App() {
   };
   const openTerima = (po) => {
     setTerimaPo(po);
-    setTerimaForm({ tanggal: todayISO(), suratJalan: '', unit: '', tutup: !!po.ditutup, rows: (po.items || []).map((it) => ({ kode: isPoItemRow(it) ? (matchMat(it)?.Kode || '') : '', qtyNow: '', ket: '' })) });
+    // Keterangan penerimaan sebelumnya diambil dari Stok Masuk (PO dan kode yang sama), supaya tidak hilang saat form dibuka lagi
+    const ketLama = (kode) => {
+      if (!kode) return '';
+      const rows = dataMasuk.filter((r) => String(r.poId || '') === String(po.id)
+        && String(r.Kode).toLowerCase() === String(kode).toLowerCase()
+        && String(r.Keterangan || '').trim() && String(r.Keterangan).trim() !== 'Penerimaan dari PO');
+      return rows.length ? rows.sort((a, b) => Number(b.id) - Number(a.id))[0].Keterangan : '';
+    };
+    setTerimaForm({
+      tanggal: todayISO(), suratJalan: '', unit: '', tutup: !!po.ditutup,
+      rows: (po.items || []).map((it) => {
+        const kode = isPoItemRow(it) ? (matchMat(it)?.Kode || '') : '';
+        return { kode, qtyNow: '', ket: ketLama(kode) };
+      })
+    });
   };
   const closeTerima = () => { setTerimaPo(null); setTerimaForm(null); };
   const setTerimaRow = (i, patch) => setTerimaForm((f) => ({ ...f, rows: f.rows.map((r, k) => (k === i ? { ...r, ...patch } : r)) }));
