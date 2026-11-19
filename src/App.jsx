@@ -1185,7 +1185,18 @@ export default function App() {
     }
     if (lines.length === 0 && !!f.tutup === !!po.ditutup) return notify('Isi qty "Diterima Sekarang" minimal satu baris.', 'error');
     const lebih = lines.filter((l) => (qtyNum(l.it.qty) || 0) > 0 && (Number(l.it.diterima) || 0) + l.qty > qtyNum(l.it.qty));
-    if (lebih.length && !window.confirm(`${lebih.length} baris melebihi jumlah yang dipesan. Tetap simpan?`)) return;
+    // Ringkasan sebelum disimpan, supaya salah ketik jumlah (mis. 100 padahal 10) terlihat dulu
+    if (lines.length > 0) {
+      const daftar = lines.slice(0, 12).map((l) => {
+        const ord = qtyNum(l.it.qty) || 0;
+        const sisa = Math.max(0, ord - ((Number(l.it.diterima) || 0) + l.qty));
+        return `\u2022 ${l.mat.Kode} ${l.mat['Nama Barang'] || ''}: +${l.qty.toLocaleString('id-ID')} (dipesan ${l.it.qty || '-'}, sisa setelah ini ${sisa.toLocaleString('id-ID')})`;
+      }).join('\n');
+      const pesan = `Simpan penerimaan PO ${po.noPo}?\n\n${daftar}${lines.length > 12 ? `\n... dan ${lines.length - 12} baris lain` : ''}`
+        + `${lebih.length ? `\n\nPERHATIAN: ${lebih.length} baris melebihi jumlah yang dipesan.` : ''}`
+        + '\n\nPeriksa jumlahnya. Kalau terlanjur salah, bisa dikoreksi lewat menu Stok Masuk.';
+      if (!window.confirm(pesan)) return;
+    }
     setSaving(true);
     try {
       const { error } = await supabase.rpc('terima_po', {
@@ -2968,7 +2979,7 @@ export default function App() {
       {terimaPo && terimaForm && (
         <Modal dark={darkMode} xwide title={`Penerimaan Barang - PO ${terimaPo.noPo}`} icon={<ArrowDownToLine size={18} className="text-emerald-500" />} onClose={closeTerima}>
           <form onSubmit={saveTerima} onKeyDown={enterNext} className="space-y-3 text-xs">
-            <p className="text-[11px] text-slate-400">Isi kolom <b>Diterima Sekarang</b> untuk barang yang datang. Saat disimpan, tiap baris otomatis tercatat di <b>Stok Masuk</b> (lengkap dengan No. PO dan Kekurangan Supply) dan stok barang bertambah. Penerimaan bisa dicicil beberapa kali.</p>
+            <p className="text-[11px] text-slate-400">Isi kolom <b>Diterima Sekarang</b> untuk barang yang datang. Saat disimpan, tiap baris otomatis tercatat di <b>Stok Masuk</b> (lengkap dengan No. PO dan Kekurangan Supply) dan stok barang bertambah. Penerimaan bisa dicicil beberapa kali. Salah input jumlah? Koreksi lewat menu <b>Stok Masuk</b> (ikon pensil); jumlah di PO ikut menyesuaikan.</p>
             <div className="grid grid-cols-4 gap-2 items-end">
               <Field label="Tanggal Terima"><input type="date" required className={inputClass} value={terimaForm.tanggal} onChange={(e) => setTerimaForm({ ...terimaForm, tanggal: e.target.value })} /></Field>
               <Field label="No. Surat Jalan"><input type="text" className={inputClass} value={terimaForm.suratJalan} onChange={(e) => setTerimaForm({ ...terimaForm, suratJalan: e.target.value })} /></Field>
