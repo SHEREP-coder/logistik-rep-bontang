@@ -3,6 +3,7 @@ import * as XLSX from 'xlsx';
 import { Search, Plus, Pencil, Download, Printer, History, X, Check, Trash2, RefreshCw, Upload } from 'lucide-react';
 import { supabase, pgMessage } from './supabase';
 import { parseRekap } from './apdImport';
+import { useTabel, Th, BtnReset, TabelRekapUkuran, rankUkuran } from './ApdTabel';
 import {
   JABATAN_SEPATU_6_BULAN, QTY_SEPATU, QTY_SERAGAM, INTERVAL_SERAGAM,
   pad2, todayISO, addMonths, monthKey, hitungJadwal, statusJadwal, masukOrderan, rekapUkuran,
@@ -31,6 +32,7 @@ const fmt = (iso) => {
   const [y, m, d] = String(iso).slice(0, 10).split('-').map(Number);
   return `${d} ${BLN3[m - 1]} ${y}`;
 };
+const tglTampil = (v) => (v ? fmt(v) : '(kosong)');
 const fmtPanjang = (iso) => {
   const [y, m, d] = String(iso).slice(0, 10).split('-').map(Number);
   return `${d} ${NAMA_BULAN[m - 1]} ${y}`;
@@ -98,7 +100,6 @@ export default function ApdKaryawan({ canEdit, darkMode, notify, profile }) {
   // daftar karyawan
   const [cari, setCari] = useState('');
   const [filterAktif, setFilterAktif] = useState('aktif');
-  const [urut, setUrut] = useState('nama');
   const [page, setPage] = useState(1);
 
   // orderan bulanan
@@ -164,19 +165,35 @@ export default function ApdKaryawan({ canEdit, darkMode, notify, profile }) {
   }, [karyawan]);
 
   /* ---------- daftar karyawan: saring, urut, ringkasan ---------- */
-  const daftar = useMemo(() => {
+  const statusDaftar = ({ k, j }) => {
+    if (!k.aktif) return 'Resign';
+    const a = statusJadwal(j.nextSepatu, ymNow); const g = statusJadwal(j.nextSeragam, ymNow);
+    return a === 'terlambat' || g === 'terlambat' ? 'Terlambat' : a === 'bulan' || g === 'bulan' ? 'Bulan ini' : 'Aman';
+  };
+  const ukS = (r) => String(r.k.ukuran_sepatu || '').trim();
+  const ukG = (r) => String(r.k.ukuran_seragam || '').trim().toUpperCase();
+  const kolomDaftar = [
+    { key: 'amodi', label: 'NRP AMODI', ambil: (r) => r.k.nrp_amodi || r.k.nrp },
+    { key: 'nama', label: 'NAMA', kiri: true, ambil: (r) => r.k.nama },
+    { key: 'jabatan', label: 'JABATAN', kiri: true, ambil: (r) => r.k.jabatan || '' },
+    { key: 'uks', label: 'SEPATU', ambil: ukS, urut: (r) => rankUkuran('sepatu', ukS(r)) },
+    { key: 'ukg', label: 'SERAGAM', ambil: ukG, urut: (r) => rankUkuran('seragam', ukG(r)) },
+    { key: 'ls', label: 'TERIMA SEPATU\nTERAKHIR', ambil: (r) => r.j.lastSepatu || '', tampil: tglTampil },
+    { key: 'ns', label: 'SEPATU\nBERIKUTNYA', ambil: (r) => r.j.nextSepatu || '', tampil: tglTampil },
+    { key: 'lg', label: 'TERIMA SERAGAM\nTERAKHIR', ambil: (r) => r.j.lastSeragam || '', tampil: tglTampil },
+    { key: 'ng', label: 'SERAGAM\nBERIKUTNYA', ambil: (r) => r.j.nextSeragam || '', tampil: tglTampil },
+    { key: 'status', label: 'STATUS', ambil: statusDaftar },
+  ];
+  const tabDaftar = useTabel(kolomDaftar);
+  // dasar: filter aktif/resign dan kotak cari, urut nama; lalu filter dan urut dari header kolom
+  const daftarDasar = useMemo(() => {
     const q = cari.trim().toLowerCase();
     let rows = data.filter(({ k }) => (filterAktif === 'semua' ? true : filterAktif === 'aktif' ? k.aktif : !k.aktif));
     if (q) rows = rows.filter(({ k }) => [k.nrp, k.nrp_amodi, k.nama, k.jabatan].some((v) => String(v || '').toLowerCase().includes(q)));
-    const cmpDate = (a, b) => (a || '9999') < (b || '9999') ? -1 : (a || '9999') > (b || '9999') ? 1 : 0;
-    rows = rows.slice().sort((a, b) => {
-      if (urut === 'sepatu') return cmpDate(a.j.nextSepatu, b.j.nextSepatu) || a.k.nama.localeCompare(b.k.nama);
-      if (urut === 'seragam') return cmpDate(a.j.nextSeragam, b.j.nextSeragam) || a.k.nama.localeCompare(b.k.nama);
-      if (urut === 'jabatan') return String(a.k.jabatan || '').localeCompare(String(b.k.jabatan || '')) || a.k.nama.localeCompare(b.k.nama);
-      return a.k.nama.localeCompare(b.k.nama);
-    });
-    return rows;
-  }, [data, cari, filterAktif, urut]);
+    return rows.slice().sort((a, b) => a.k.nama.localeCompare(b.k.nama));
+  }, [data, cari, filterAktif]);
+  const daftar = useMemo(() => tabDaftar.terapkan(daftarDasar), [daftarDasar, tabDaftar.sort, tabDaftar.filter]); // eslint-disable-line
+  useEffect(() => { setPage(1); }, [tabDaftar.sort, tabDaftar.filter]);
 
   const ringkas = useMemo(() => {
     const aktif = data.filter(({ k }) => k.aktif);
@@ -269,6 +286,74 @@ export default function ApdKaryawan({ canEdit, darkMode, notify, profile }) {
   }, [data, pembagian, thnRekap, ymNow]);
   const sumBulan = (f) => rekap.bulan.reduce((a, b) => a + f(b), 0);
   const labelBulan = (mo) => `${BLN3[Number(mo.slice(5, 7)) - 1]} ${mo.slice(0, 4)}`;
+
+  /* ---------- urut, filter, cari pada header kolom: orderan, tanda terima, rekap ---------- */
+  const kolomOrderan = (jenis) => {
+    const uk = (r) => String((jenis === 'sepatu' ? r.k.ukuran_sepatu : r.k.ukuran_seragam) || '').trim().toUpperCase();
+    return [
+      { key: 'amodi', label: 'NRP AMODI', ambil: (r) => r.k.nrp_amodi || r.k.nrp },
+      { key: 'nama', label: 'NAMA', kiri: true, ambil: (r) => r.k.nama },
+      { key: 'jabatan', label: 'JABATAN', kiri: true, ambil: (r) => r.k.jabatan || '' },
+      { key: 'uk', label: 'UKURAN', ambil: uk, urut: (r) => rankUkuran(jenis, uk(r)) },
+      { key: 'tgl', label: 'JADWAL', ambil: (r) => r.tgl || '', tampil: tglTampil },
+      { key: 'last', label: 'TERIMA TERAKHIR', ambil: (r) => (jenis === 'sepatu' ? r.j.lastSepatu : r.j.lastSeragam) || '', tampil: tglTampil },
+      { key: 'status', label: 'STATUS', ambil: (r) => (r.status === 'terlambat' ? 'Terlambat' : 'Bulan ini') },
+    ];
+  };
+  const tabSepatu = useTabel(kolomOrderan('sepatu'));
+  const tabSeragam = useTabel(kolomOrderan('seragam'));
+  const sepatuTampil = useMemo(() => tabSepatu.terapkan(orderan.sepatu), [orderan, tabSepatu.sort, tabSepatu.filter]); // eslint-disable-line
+  const seragamTampil = useMemo(() => tabSeragam.terapkan(orderan.seragam), [orderan, tabSeragam.sort, tabSeragam.filter]); // eslint-disable-line
+
+  const ukTerima = (g, jenis) => String((jenis === 'sepatu' ? g.sepatu && (g.k.ukuran_sepatu || '?') : g.seragam && (g.k.ukuran_seragam || '?')) || '').trim().toUpperCase();
+  const kolomTerima = [
+    { key: 'amodi', label: 'NRP AMODI', ambil: (g) => g.k.nrp_amodi || g.k.nrp },
+    { key: 'nama', label: 'NAMA', kiri: true, ambil: (g) => g.k.nama },
+    { key: 'jabatan', label: 'JABATAN', kiri: true, ambil: (g) => g.k.jabatan || '' },
+    { key: 'sepatu', label: 'SEPATU', ambil: (g) => ukTerima(g, 'sepatu'), tampil: (v) => v || '(tidak ada)', urut: (g) => (g.sepatu ? rankUkuran('sepatu', ukTerima(g, 'sepatu')) : '') },
+    { key: 'seragam', label: 'SERAGAM', ambil: (g) => ukTerima(g, 'seragam'), tampil: (v) => v || '(tidak ada)', urut: (g) => (g.seragam ? rankUkuran('seragam', ukTerima(g, 'seragam')) : '') },
+    { key: 'jadwal', label: 'JADWAL', ambil: (g) => [g.sepatu && g.sepatu.tgl, g.seragam && g.seragam.tgl].filter(Boolean).sort()[0] || '', tampil: tglTampil },
+    { key: 'status', label: 'STATUS', ambil: (g) => (g.sepatu?.status === 'terlambat' || g.seragam?.status === 'terlambat' ? 'Terlambat' : 'Bulan ini') },
+  ];
+  const tabTerima = useTabel(kolomTerima);
+  const gabunganTampil = useMemo(() => tabTerima.terapkan(gabungan), [gabungan, tabTerima.sort, tabTerima.filter]); // eslint-disable-line
+
+  const kolomBulan = [
+    { key: 'bln', label: 'BULAN', kiri: true, ambil: (b) => b.bln, tampil: (v) => NAMA_BULAN[v - 1] },
+    { key: 'rutin', label: 'SEPATU RUTIN\n(psg)', ambil: (b) => b.sepatuRutin },
+    { key: 'rusak', label: 'SEPATU GANTI RUSAK\n(psg)', ambil: (b) => b.sepatuRusak },
+    { key: 'tot', label: 'TOTAL SEPATU\n(psg)', ambil: (b) => b.sepatuRutin + b.sepatuRusak },
+    { key: 'sg', label: 'SERAGAM\n(orang)', ambil: (b) => b.seragam },
+    { key: 'pcs', label: 'SERAGAM\n(pcs)', ambil: (b) => b.seragam * QTY_SERAGAM },
+  ];
+  const tabBulan = useTabel(kolomBulan);
+  const bulanTampil = useMemo(() => tabBulan.terapkan(rekap.bulan), [rekap, tabBulan.sort, tabBulan.filter]); // eslint-disable-line
+
+  const proyBaris = useMemo(() => [
+    { i: -1, label: 'Terlambat', telat: true, sepatu: rekap.proy.terlambat.sepatu, seragam: rekap.proy.terlambat.seragam },
+    ...rekap.months.map((mo, i) => ({ i, label: labelBulan(mo), telat: false, sepatu: rekap.proy.bulan.get(mo).sepatu, seragam: rekap.proy.bulan.get(mo).seragam })),
+  ], [rekap]); // eslint-disable-line
+  const kolomProy = [
+    { key: 'per', label: 'PERIODE', kiri: true, ambil: (r) => r.label, urut: (r) => r.i },
+    { key: 'sp', label: 'SEPATU\n(orang)', ambil: (r) => r.sepatu },
+    { key: 'sg', label: 'SERAGAM\n(orang)', ambil: (r) => r.seragam },
+    { key: 'pcs', label: 'SERAGAM\n(pcs)', ambil: (r) => r.seragam * QTY_SERAGAM },
+  ];
+  const tabProy = useTabel(kolomProy);
+  const proyTampil = useMemo(() => tabProy.terapkan(proyBaris), [proyBaris, tabProy.sort, tabProy.filter]); // eslint-disable-line
+
+  const kolomJab = [
+    { key: 'jab', label: 'JABATAN', kiri: true, ambil: (e) => e.jabatan },
+    { key: 'orang', label: 'AKTIF', ambil: (e) => e.orang },
+    { key: 'iv', label: 'SEPATU\nTIAP', ambil: (e) => e.iv, tampil: (v) => `${v} bln` },
+    { key: 'sp', label: 'SEPATU RUTIN\nDITERIMA', ambil: (e) => e.sepatu },
+    { key: 'rusak', label: 'GANTI\nRUSAK', ambil: (e) => e.rusak },
+    { key: 'sg', label: 'SERAGAM\nDITERIMA', ambil: (e) => e.seragam },
+    { key: 'ts', label: 'SEPATU\nTERLAMBAT', ambil: (e) => e.telatSepatu },
+    { key: 'tg', label: 'SERAGAM\nTERLAMBAT', ambil: (e) => e.telatSeragam },
+  ];
+  const tabJab = useTabel(kolomJab);
+  const jabTampil = useMemo(() => tabJab.terapkan(rekap.jabatan), [rekap, tabJab.sort, tabJab.filter]); // eslint-disable-line
 
   useEffect(() => {
     setSelTerima((s) => { const ids = new Set(gabungan.map((g) => g.k.id)); const n = new Set([...s].filter((id) => ids.has(id))); return n.size === s.size ? s : n; });
@@ -589,6 +674,7 @@ export default function ApdKaryawan({ canEdit, darkMode, notify, profile }) {
   const card = darkMode ? 'bg-slate-800 border-slate-700' : 'bg-white border-slate-200';
   const thead = darkMode ? 'bg-slate-900 text-slate-400 border-slate-700' : 'bg-slate-50 text-slate-600 border-slate-200';
   const divide = darkMode ? 'divide-slate-700' : 'divide-slate-100';
+  const kelasTbl = { card, thead, divide, dark: darkMode };
   const hoverRow = darkMode ? 'hover:bg-slate-700' : 'hover:bg-slate-50';
   const inputClass = 'w-full p-2 border border-slate-300 rounded-lg bg-white text-slate-900 placeholder-slate-400 focus:outline-none focus:border-blue-500 font-medium';
   const selectClass = 'px-3 py-2 text-sm border border-slate-300 rounded-lg bg-white text-slate-900 font-medium';
@@ -607,23 +693,25 @@ export default function ApdKaryawan({ canEdit, darkMode, notify, profile }) {
   const tahunOpsi = Array.from({ length: 7 }, (_, i) => now.getFullYear() - 2 + i);
 
   /* ---------- tabel orderan (satu jenis) ---------- */
-  const TabelOrderan = ({ jenis, rows }) => {
+  const TabelOrderan = ({ jenis, rows, sumber, tabel }) => {
     const nama = jenis === 'sepatu' ? 'Sepatu' : 'Seragam';
+    const kol = kolomOrderan(jenis);
+    const th = (c) => <Th key={c.key} c={c} tabel={tabel} rows={sumber} dark={darkMode} />;
     return (
       <div className={`rounded-xl shadow-sm border overflow-x-auto ${card}`}>
-        <div className="p-3 border-b">
-          <h3 className="font-bold text-sm">{jenis === 'sepatu' ? '👟' : '👕'} Orderan {nama} <span className="text-slate-400 font-normal">({rows.length} orang)</span></h3>
+        <div className="p-3 border-b flex flex-wrap items-center justify-between gap-2">
+          <h3 className="font-bold text-sm">{jenis === 'sepatu' ? '👟' : '👕'} Orderan {nama} <span className="text-slate-400 font-normal">({rows.length}{tabel.aktif ? ` dari ${sumber.length}` : ''} orang)</span></h3>
+          <BtnReset tabel={tabel} />
         </div>
         <table className="w-full min-w-[760px] text-left text-sm">
           <thead className={`border-b font-semibold leading-tight ${thead}`}>
             <tr>
-              <th className="p-2.5">NRP AMODI</th><th className="p-2.5 text-left">NAMA</th><th className="p-2.5 text-left">JABATAN</th>
-              <th className="p-2.5">UKURAN</th><th className="p-2.5">JUMLAH</th><th className="p-2.5">JADWAL</th><th className="p-2.5">TERIMA TERAKHIR</th><th className="p-2.5">STATUS</th>
+              {th(kol[0])}{th(kol[1])}{th(kol[2])}{th(kol[3])}<th className="p-2.5">JUMLAH</th>{th(kol[4])}{th(kol[5])}{th(kol[6])}
             </tr>
           </thead>
           <tbody className={`divide-y ${divide}`}>
             {rows.length === 0 ? (
-              <tr><td colSpan="8" className="p-6 text-center text-slate-400">Tidak ada jadwal {nama.toLowerCase()} pada {NAMA_BULAN[bln - 1]} {thn}.</td></tr>
+              <tr><td colSpan="8" className="p-6 text-center text-slate-400">{sumber.length > 0 ? 'Tidak ada data yang cocok dengan filter.' : `Tidak ada jadwal ${nama.toLowerCase()} pada ${NAMA_BULAN[bln - 1]} ${thn}.`}</td></tr>
             ) : rows.map((r) => (
               <tr key={r.k.id} className={hoverRow}>
                 <td className="p-2.5 text-center font-mono text-xs">{r.k.nrp_amodi || r.k.nrp}</td>
@@ -641,21 +729,6 @@ export default function ApdKaryawan({ canEdit, darkMode, notify, profile }) {
       </div>
     );
   };
-
-  const TabelRekap = ({ judul, rows, total, satuan }) => (
-    <div className={`rounded-xl shadow-sm border overflow-hidden ${card}`}>
-      <div className="p-3 border-b font-bold text-sm">{judul}</div>
-      <table className="w-full text-sm">
-        <thead className={`border-b font-semibold ${thead}`}><tr><th className="p-2 text-left">UKURAN</th><th className="p-2 text-right">JUMLAH ({satuan})</th></tr></thead>
-        <tbody className={`divide-y ${divide}`}>
-          {rows.length === 0 ? <tr><td colSpan="2" className="p-4 text-center text-slate-400">-</td></tr> : rows.map(([u, n]) => (
-            <tr key={u}><td className="p-2 font-bold">{u}</td><td className="p-2 text-right font-semibold">{n}</td></tr>
-          ))}
-          <tr className="font-bold"><td className="p-2">TOTAL</td><td className="p-2 text-right">{total}</td></tr>
-        </tbody>
-      </table>
-    </div>
-  );
 
   // satu sel (sepatu atau seragam) pada dialog tanda terima
   const celTerima = (g, jenis) => {
@@ -740,10 +813,7 @@ export default function ApdKaryawan({ canEdit, darkMode, notify, profile }) {
               <select value={filterAktif} onChange={(e) => { setFilterAktif(e.target.value); setPage(1); }} className={selectClass}>
                 <option value="aktif">Aktif</option><option value="nonaktif">Resign</option><option value="semua">Semua</option>
               </select>
-              <select value={urut} onChange={(e) => setUrut(e.target.value)} className={selectClass}>
-                <option value="nama">Urut: Nama</option><option value="jabatan">Urut: Jabatan</option>
-                <option value="sepatu">Urut: Jadwal sepatu</option><option value="seragam">Urut: Jadwal seragam</option>
-              </select>
+              <BtnReset tabel={tabDaftar} />
               <button onClick={() => setForm(emptyForm())} className="bg-blue-600 hover:bg-blue-700 text-white px-3 py-2 rounded-lg text-xs font-semibold flex items-center gap-1"><Plus size={14} /> Tambah Karyawan</button>
             </div>
 
@@ -751,11 +821,8 @@ export default function ApdKaryawan({ canEdit, darkMode, notify, profile }) {
               <table className="w-full min-w-[1250px] text-left text-sm">
                 <thead className={`border-b font-semibold leading-tight ${thead}`}>
                   <tr>
-                    <th className="p-2.5">NRP AMODI</th><th className="p-2.5 text-left">NAMA</th><th className="p-2.5 text-left">JABATAN</th>
-                    <th className="p-2.5">SEPATU</th><th className="p-2.5">SERAGAM</th>
-                    <th className="p-2.5">TERIMA SEPATU<br />TERAKHIR</th><th className="p-2.5">SEPATU<br />BERIKUTNYA</th>
-                    <th className="p-2.5">TERIMA SERAGAM<br />TERAKHIR</th><th className="p-2.5">SERAGAM<br />BERIKUTNYA</th>
-                    <th className="p-2.5">STATUS</th><th className="p-2.5">AKSI</th>
+                    {kolomDaftar.map((c) => <Th key={c.key} c={c} tabel={tabDaftar} rows={daftarDasar} dark={darkMode} />)}
+                    <th className="p-2.5">AKSI</th>
                   </tr>
                 </thead>
                 <tbody className={`divide-y ${divide}`}>
@@ -822,6 +889,7 @@ export default function ApdKaryawan({ canEdit, darkMode, notify, profile }) {
               </label>
               <label className="text-xs font-semibold ml-2">Tanggal pembagian:</label>
               <input type="date" value={tglTerima} onChange={(e) => setTglTerima(e.target.value)} className="px-3 py-1.5 text-sm border border-slate-300 rounded-lg bg-white text-slate-900 font-medium" />
+              <BtnReset tabel={tabTerima} />
               <div className="flex-1" />
               <button onClick={() => window.print()} disabled={!terimaRows.length} className="bg-slate-700 disabled:opacity-40 text-white px-3 py-2 rounded-lg text-xs font-semibold flex items-center gap-1"><Printer size={14} /> Cetak Tanda Terima ({terimaRows.length})</button>
               <button onClick={() => bukaTerima()} disabled={!terimaRows.length || saving} className="bg-emerald-600 disabled:opacity-40 text-white px-3 py-2 rounded-lg text-xs font-semibold flex items-center gap-1"><Check size={14} /> Catat sudah diterima ({terimaRows.length})</button>
@@ -835,15 +903,17 @@ export default function ApdKaryawan({ canEdit, darkMode, notify, profile }) {
               <table className="w-full min-w-[820px] text-left text-sm">
                 <thead className={`border-b font-semibold leading-tight ${thead}`}>
                   <tr>
-                    <th className="p-2.5 w-8"><input type="checkbox" checked={gabungan.length > 0 && gabungan.every((g) => selTerima.has(g.k.id))} onChange={() => setSelTerima(gabungan.every((g) => selTerima.has(g.k.id)) ? new Set() : new Set(gabungan.map((g) => g.k.id)))} /></th>
-                    <th className="p-2.5">NRP AMODI</th><th className="p-2.5 text-left">NAMA</th><th className="p-2.5 text-left">JABATAN</th>
-                    <th className="p-2.5">SEPATU</th><th className="p-2.5">SERAGAM</th><th className="p-2.5">JADWAL</th><th className="p-2.5">STATUS</th><th className="p-2.5">AKSI</th>
+                    <th className="p-2.5 w-8"><input type="checkbox" title="Centang semua baris yang tampil"
+                      checked={gabunganTampil.length > 0 && gabunganTampil.every((g) => selTerima.has(g.k.id))}
+                      onChange={() => { const semuaTerpilih = gabunganTampil.every((g) => selTerima.has(g.k.id)); const n = new Set(selTerima); gabunganTampil.forEach((g) => { if (semuaTerpilih) n.delete(g.k.id); else n.add(g.k.id); }); setSelTerima(n); }} /></th>
+                    {kolomTerima.map((c) => <Th key={c.key} c={c} tabel={tabTerima} rows={gabungan} dark={darkMode} />)}
+                    <th className="p-2.5">AKSI</th>
                   </tr>
                 </thead>
                 <tbody className={`divide-y ${divide}`}>
                   {gabungan.length === 0 ? (
-                    <tr><td colSpan="9" className="p-8 text-center text-slate-400">{loading ? 'Memuat...' : `Tidak ada jadwal pada ${NAMA_BULAN[bln - 1]} ${thn}.`}</td></tr>
-                  ) : gabungan.map((g) => {
+                    <tr><td colSpan="9" className="p-8 text-center text-slate-400">{loading ? 'Memuat...' : gabungan.length > 0 ? 'Tidak ada data yang cocok dengan filter.' : `Tidak ada jadwal pada ${NAMA_BULAN[bln - 1]} ${thn}.`}</td></tr>
+                  ) : gabunganTampil.map((g) => {
                     const telat = g.sepatu?.status === 'terlambat' || g.seragam?.status === 'terlambat';
                     return (
                       <tr key={g.k.id} className={hoverRow}>
@@ -955,11 +1025,14 @@ export default function ApdKaryawan({ canEdit, darkMode, notify, profile }) {
             </div>
 
             <div className={`rounded-xl shadow-sm border overflow-x-auto ${card}`}>
-              <div className="p-3 border-b font-bold text-sm">Pembagian per bulan, tahun {thnRekap} <span className="text-slate-400 font-normal">(dari catatan tanggal terima)</span></div>
+              <div className="p-3 border-b font-bold text-sm flex flex-wrap items-center justify-between gap-2">
+                <span>Pembagian per bulan, tahun {thnRekap} <span className="text-slate-400 font-normal">(dari catatan tanggal terima)</span></span>
+                <BtnReset tabel={tabBulan} />
+              </div>
               <table className="w-full min-w-[640px] text-sm">
-                <thead className={`border-b font-semibold leading-tight ${thead}`}><tr><th className="p-2.5 text-left">BULAN</th><th className="p-2.5">SEPATU RUTIN<br />(psg)</th><th className="p-2.5">SEPATU GANTI RUSAK<br />(psg)</th><th className="p-2.5">TOTAL SEPATU<br />(psg)</th><th className="p-2.5">SERAGAM<br />(orang)</th><th className="p-2.5">SERAGAM<br />(pcs)</th></tr></thead>
+                <thead className={`border-b font-semibold leading-tight ${thead}`}><tr>{kolomBulan.map((c) => <Th key={c.key} c={c} tabel={tabBulan} rows={rekap.bulan} dark={darkMode} />)}</tr></thead>
                 <tbody className={`divide-y ${divide}`}>
-                  {rekap.bulan.map((b) => (
+                  {bulanTampil.length === 0 ? <tr><td colSpan="6" className="p-4 text-center text-slate-400">Tidak ada data yang cocok dengan filter.</td></tr> : bulanTampil.map((b) => (
                     <tr key={b.bln} className={hoverRow}>
                       <td className="p-2.5 font-semibold">{NAMA_BULAN[b.bln - 1]}</td>
                       <td className="p-2.5 text-center">{b.sepatuRutin || '-'}</td><td className="p-2.5 text-center">{b.sepatuRusak || '-'}</td>
@@ -968,8 +1041,10 @@ export default function ApdKaryawan({ canEdit, darkMode, notify, profile }) {
                     </tr>
                   ))}
                   <tr className="font-bold">
-                    <td className="p-2.5">TOTAL</td><td className="p-2.5 text-center">{sumBulan((b) => b.sepatuRutin)}</td><td className="p-2.5 text-center">{sumBulan((b) => b.sepatuRusak)}</td>
-                    <td className="p-2.5 text-center">{sumBulan((b) => b.sepatuRutin + b.sepatuRusak)}</td><td className="p-2.5 text-center">{sumBulan((b) => b.seragam)}</td><td className="p-2.5 text-center">{sumBulan((b) => b.seragam) * QTY_SERAGAM}</td>
+                    <td className="p-2.5">TOTAL{tabBulan.aktif ? ' (terfilter)' : ''}</td>
+                    <td className="p-2.5 text-center">{bulanTampil.reduce((a, b) => a + b.sepatuRutin, 0)}</td><td className="p-2.5 text-center">{bulanTampil.reduce((a, b) => a + b.sepatuRusak, 0)}</td>
+                    <td className="p-2.5 text-center">{bulanTampil.reduce((a, b) => a + b.sepatuRutin + b.sepatuRusak, 0)}</td><td className="p-2.5 text-center">{bulanTampil.reduce((a, b) => a + b.seragam, 0)}</td>
+                    <td className="p-2.5 text-center">{bulanTampil.reduce((a, b) => a + b.seragam, 0) * QTY_SERAGAM}</td>
                   </tr>
                 </tbody>
               </table>
@@ -977,30 +1052,32 @@ export default function ApdKaryawan({ canEdit, darkMode, notify, profile }) {
 
             <div className="grid lg:grid-cols-2 gap-4 items-start">
               <div className={`rounded-xl shadow-sm border overflow-x-auto ${card}`}>
-                <div className="p-3 border-b font-bold text-sm">Proyeksi kebutuhan 12 bulan ke depan</div>
+                <div className="p-3 border-b font-bold text-sm flex flex-wrap items-center justify-between gap-2"><span>Proyeksi kebutuhan 12 bulan ke depan</span><BtnReset tabel={tabProy} /></div>
                 <table className="w-full min-w-[420px] text-sm">
-                  <thead className={`border-b font-semibold leading-tight ${thead}`}><tr><th className="p-2.5 text-left">PERIODE</th><th className="p-2.5">SEPATU<br />(orang)</th><th className="p-2.5">SERAGAM<br />(orang)</th><th className="p-2.5">SERAGAM<br />(pcs)</th></tr></thead>
+                  <thead className={`border-b font-semibold leading-tight ${thead}`}><tr>{kolomProy.map((c) => <Th key={c.key} c={c} tabel={tabProy} rows={proyBaris} dark={darkMode} />)}</tr></thead>
                   <tbody className={`divide-y ${divide}`}>
-                    <tr className="bg-rose-50 text-rose-800 font-semibold"><td className="p-2.5">Terlambat</td><td className="p-2.5 text-center">{rekap.proy.terlambat.sepatu}</td><td className="p-2.5 text-center">{rekap.proy.terlambat.seragam}</td><td className="p-2.5 text-center">{rekap.proy.terlambat.seragam * QTY_SERAGAM}</td></tr>
-                    {rekap.months.map((mo) => { const v = rekap.proy.bulan.get(mo); return (
-                      <tr key={mo} className={hoverRow}><td className="p-2.5 font-semibold">{labelBulan(mo)}</td><td className="p-2.5 text-center">{v.sepatu || '-'}</td><td className="p-2.5 text-center">{v.seragam || '-'}</td><td className="p-2.5 text-center">{v.seragam * QTY_SERAGAM || '-'}</td></tr>
-                    ); })}
+                    {proyTampil.length === 0 ? <tr><td colSpan="4" className="p-4 text-center text-slate-400">Tidak ada data yang cocok dengan filter.</td></tr> : proyTampil.map((r) => (
+                      <tr key={r.label} className={r.telat ? 'bg-rose-50 text-rose-800 font-semibold' : hoverRow}>
+                        <td className={`p-2.5 ${r.telat ? '' : 'font-semibold'}`}>{r.label}</td>
+                        <td className="p-2.5 text-center">{r.sepatu || '-'}</td><td className="p-2.5 text-center">{r.seragam || '-'}</td><td className="p-2.5 text-center">{r.seragam * QTY_SERAGAM || '-'}</td>
+                      </tr>
+                    ))}
                   </tbody>
                 </table>
                 <p className="p-3 text-[11px] text-slate-400 border-t">Dihitung dari jadwal saat ini; siklus berikutnya = jadwal + interval. Bergeser bila tanggal terima sebenarnya berbeda.</p>
               </div>
               <div className="space-y-4">
-                {TabelRekap({ judul: 'Ukuran sepatu karyawan aktif', rows: rekap.ukSepatu, total: rekap.ukSepatu.reduce((a, [, n]) => a + n, 0), satuan: 'orang' })}
-                {TabelRekap({ judul: 'Ukuran seragam karyawan aktif', rows: rekap.ukSeragam, total: rekap.ukSeragam.reduce((a, [, n]) => a + n, 0), satuan: 'orang' })}
+                <TabelRekapUkuran judul="Ukuran sepatu karyawan aktif" rows={rekap.ukSepatu} satuan="orang" jenis="sepatu" kelas={kelasTbl} />
+                <TabelRekapUkuran judul="Ukuran seragam karyawan aktif" rows={rekap.ukSeragam} satuan="orang" jenis="seragam" kelas={kelasTbl} />
               </div>
             </div>
 
             <div className={`rounded-xl shadow-sm border overflow-x-auto ${card}`}>
-              <div className="p-3 border-b font-bold text-sm">Rekap per jabatan (karyawan aktif), pembagian tahun {thnRekap}</div>
+              <div className="p-3 border-b font-bold text-sm flex flex-wrap items-center justify-between gap-2"><span>Rekap per jabatan (karyawan aktif), pembagian tahun {thnRekap}</span><BtnReset tabel={tabJab} /></div>
               <table className="w-full min-w-[820px] text-sm">
-                <thead className={`border-b font-semibold leading-tight ${thead}`}><tr><th className="p-2.5 text-left">JABATAN</th><th className="p-2.5">AKTIF</th><th className="p-2.5">SEPATU<br />TIAP</th><th className="p-2.5">SEPATU RUTIN<br />DITERIMA</th><th className="p-2.5">GANTI<br />RUSAK</th><th className="p-2.5">SERAGAM<br />DITERIMA</th><th className="p-2.5">SEPATU<br />TERLAMBAT</th><th className="p-2.5">SERAGAM<br />TERLAMBAT</th></tr></thead>
+                <thead className={`border-b font-semibold leading-tight ${thead}`}><tr>{kolomJab.map((c) => <Th key={c.key} c={c} tabel={tabJab} rows={rekap.jabatan} dark={darkMode} />)}</tr></thead>
                 <tbody className={`divide-y ${divide}`}>
-                  {rekap.jabatan.map((e) => (
+                  {jabTampil.length === 0 ? <tr><td colSpan="8" className="p-4 text-center text-slate-400">Tidak ada data yang cocok dengan filter.</td></tr> : jabTampil.map((e) => (
                     <tr key={e.jabatan} className={hoverRow}>
                       <td className="p-2.5 font-semibold">{e.jabatan}</td><td className="p-2.5 text-center font-bold">{e.orang}</td><td className="p-2.5 text-center">{e.iv} bln</td>
                       <td className="p-2.5 text-center">{e.sepatu || '-'}</td><td className="p-2.5 text-center">{e.rusak || '-'}</td><td className="p-2.5 text-center">{e.seragam || '-'}</td>
@@ -1008,9 +1085,9 @@ export default function ApdKaryawan({ canEdit, darkMode, notify, profile }) {
                     </tr>
                   ))}
                   <tr className="font-bold">
-                    <td className="p-2.5">TOTAL</td><td className="p-2.5 text-center">{rekap.jabatan.reduce((a, e) => a + e.orang, 0)}</td><td className="p-2.5"></td>
-                    <td className="p-2.5 text-center">{rekap.jabatan.reduce((a, e) => a + e.sepatu, 0)}</td><td className="p-2.5 text-center">{rekap.jabatan.reduce((a, e) => a + e.rusak, 0)}</td><td className="p-2.5 text-center">{rekap.jabatan.reduce((a, e) => a + e.seragam, 0)}</td>
-                    <td className="p-2.5 text-center">{rekap.jabatan.reduce((a, e) => a + e.telatSepatu, 0)}</td><td className="p-2.5 text-center">{rekap.jabatan.reduce((a, e) => a + e.telatSeragam, 0)}</td>
+                    <td className="p-2.5">TOTAL{tabJab.aktif ? ' (terfilter)' : ''}</td><td className="p-2.5 text-center">{jabTampil.reduce((a, e) => a + e.orang, 0)}</td><td className="p-2.5"></td>
+                    <td className="p-2.5 text-center">{jabTampil.reduce((a, e) => a + e.sepatu, 0)}</td><td className="p-2.5 text-center">{jabTampil.reduce((a, e) => a + e.rusak, 0)}</td><td className="p-2.5 text-center">{jabTampil.reduce((a, e) => a + e.seragam, 0)}</td>
+                    <td className="p-2.5 text-center">{jabTampil.reduce((a, e) => a + e.telatSepatu, 0)}</td><td className="p-2.5 text-center">{jabTampil.reduce((a, e) => a + e.telatSeragam, 0)}</td>
                   </tr>
                 </tbody>
               </table>
@@ -1044,12 +1121,12 @@ export default function ApdKaryawan({ canEdit, darkMode, notify, profile }) {
 
             <div className="grid lg:grid-cols-4 gap-4 items-start">
               <div className="lg:col-span-3 space-y-4">
-                {TabelOrderan({ jenis: 'sepatu', rows: orderan.sepatu })}
-                {TabelOrderan({ jenis: 'seragam', rows: orderan.seragam })}
+                {TabelOrderan({ jenis: 'sepatu', rows: sepatuTampil, sumber: orderan.sepatu, tabel: tabSepatu })}
+                {TabelOrderan({ jenis: 'seragam', rows: seragamTampil, sumber: orderan.seragam, tabel: tabSeragam })}
               </div>
               <div className="space-y-4">
-                {TabelRekap({ judul: 'Rekap Sepatu untuk PO', rows: rekapSepatu, total: totSepatu, satuan: 'psg' })}
-                {TabelRekap({ judul: `Rekap Seragam untuk PO (${QTY_SERAGAM} per orang)`, rows: rekapSeragam, total: totSeragam, satuan: 'pcs' })}
+                <TabelRekapUkuran judul="Rekap Sepatu untuk PO" rows={rekapSepatu} satuan="psg" jenis="sepatu" kelas={kelasTbl} />
+                <TabelRekapUkuran judul={`Rekap Seragam untuk PO (${QTY_SERAGAM} per orang)`} rows={rekapSeragam} satuan="pcs" jenis="seragam" kelas={kelasTbl} />
               </div>
             </div>
             <p className="text-[11px] text-slate-400">Daftar dihitung dari data terkini: bulan yang sudah lewat hanya menampilkan pembagian yang belum dicatat.</p>
