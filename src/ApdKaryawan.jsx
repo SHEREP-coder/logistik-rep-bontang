@@ -51,7 +51,21 @@ const loadAll = async (table) => {
 const emptyForm = () => ({
   id: null, nrp: '', nrp_amodi: '', nama: '', jabatan: '', tanggal_masuk: '', ukuran_sepatu: '', ukuran_seragam: '',
   keterangan: '', terima_sepatu: '', terima_seragam: '',
+  // hanya terisi saat mengubah: tanggal dan id catatan terakhir sebelum diubah, agar koreksi bisa dikenali
+  awal_sepatu: '', awal_seragam: '', rec_sepatu: null, rec_seragam: null, kat_sepatu: '', kat_seragam: '',
 });
+
+// Form ubah data: isi dari data karyawan + catatan terima terakhir (riwayat sudah terurut dari yang terbaru)
+const formDari = (k, riwayat) => {
+  const base = { ...emptyForm(), ...Object.fromEntries(Object.entries(k).map(([a, b]) => [a, b ?? ''])) };
+  const sp = riwayat.find((r) => r.jenis === 'sepatu');
+  const sg = riwayat.find((r) => r.jenis === 'seragam');
+  return {
+    ...base,
+    terima_sepatu: sp ? sp.tanggal : '', awal_sepatu: sp ? sp.tanggal : '', rec_sepatu: sp ? sp.id : null, kat_sepatu: sp ? sp.kategori : '',
+    terima_seragam: sg ? sg.tanggal : '', awal_seragam: sg ? sg.tanggal : '', rec_seragam: sg ? sg.id : null, kat_seragam: sg ? sg.kategori : '',
+  };
+};
 
 /* ============================== KOMPONEN KECIL ============================== */
 function Modal({ title, onClose, dark, children, wide }) {
@@ -92,9 +106,6 @@ export default function ApdKaryawan({ canEdit, darkMode, notify, profile }) {
   const [bln, setBln] = useState(now.getMonth() + 1);
   const [thn, setThn] = useState(now.getFullYear());
   const [sertakanTerlambat, setSertakanTerlambat] = useState(true);
-  const [tglBagi, setTglBagi] = useState(todayISO());
-  const [selSepatu, setSelSepatu] = useState(new Set());
-  const [selSeragam, setSelSeragam] = useState(new Set());
 
   // rekap
   const [thnRekap, setThnRekap] = useState(now.getFullYear());
@@ -263,12 +274,6 @@ export default function ApdKaryawan({ canEdit, darkMode, notify, profile }) {
     setSelTerima((s) => { const ids = new Set(gabungan.map((g) => g.k.id)); const n = new Set([...s].filter((id) => ids.has(id))); return n.size === s.size ? s : n; });
   }, [gabungan]);
 
-  // buang pilihan yang sudah tidak ada di daftar (mis. setelah dibagikan atau ganti bulan)
-  useEffect(() => {
-    setSelSepatu((s) => { const ids = new Set(orderan.sepatu.map((r) => r.k.id)); const n = new Set([...s].filter((id) => ids.has(id))); return n.size === s.size ? s : n; });
-    setSelSeragam((s) => { const ids = new Set(orderan.seragam.map((r) => r.k.id)); const n = new Set([...s].filter((id) => ids.has(id))); return n.size === s.size ? s : n; });
-  }, [orderan]);
-
   /* ---------- simpan karyawan ---------- */
   const simpanKaryawan = async () => {
     const f = form;
@@ -279,11 +284,39 @@ export default function ApdKaryawan({ canEdit, darkMode, notify, profile }) {
       tanggal_masuk: f.tanggal_masuk || null, ukuran_sepatu: f.ukuran_sepatu.trim() || null,
       ukuran_seragam: f.ukuran_seragam.trim().toUpperCase() || null, keterangan: f.keterangan.trim() || null,
     };
+    // koreksi tanda terima terakhir (hanya saat mengubah data): ubah tanggal, hapus, atau tambah catatan
+    const koreksi = [];
+    if (f.id) {
+      for (const jenis of ['sepatu', 'seragam']) {
+        const baru = f[`terima_${jenis}`] || ''; const lama = f[`awal_${jenis}`] || ''; const rec = f[`rec_${jenis}`];
+        if (baru === lama) continue;
+        if (baru && baru > today) return notify(`Tanggal terima ${jenis} melewati hari ini.`, 'error');
+        if (!baru && rec) {
+          if (!window.confirm(`Kosongkan tanda terima ${jenis} terakhir (${fmt(lama)})? Catatan itu akan dihapus dan jadwal dihitung dari catatan sebelumnya.`)) return;
+          koreksi.push({ op: 'hapus', id: rec });
+        } else if (baru && rec) {
+          const kat = f[`kat_${jenis}`];
+          if (pembagian.some((p) => p.karyawan_id === f.id && p.jenis === jenis && p.kategori === kat && p.tanggal === baru && p.id !== rec)) {
+            return notify(`Tanda terima ${jenis} tanggal ${fmt(baru)} sudah tercatat di riwayat.`, 'error');
+          }
+          koreksi.push({ op: 'ubah', id: rec, tanggal: baru });
+        } else if (baru && !rec) {
+          koreksi.push({ op: 'tambah', jenis, tanggal: baru });
+        }
+      }
+    }
     setSaving(true);
     try {
       if (f.id) {
         const { error } = await supabase.from('apd_karyawan').update({ ...row, updated_at: new Date().toISOString(), updated_by: oleh }).eq('id', f.id);
         if (error) throw error;
+        for (const kx of koreksi) {
+          let res;
+          if (kx.op === 'hapus') res = await supabase.from('apd_pembagian').delete().eq('id', kx.id);
+          else if (kx.op === 'ubah') res = await supabase.from('apd_pembagian').update({ tanggal: kx.tanggal }).eq('id', kx.id);
+          else res = await supabase.from('apd_pembagian').insert({ karyawan_id: f.id, jenis: kx.jenis, kategori: 'rutin', tanggal: kx.tanggal, created_by: oleh });
+          if (res.error) throw res.error;
+        }
       } else {
         const { data: ins, error } = await supabase.from('apd_karyawan').insert({ ...row, created_by: oleh }).select().single();
         if (error) throw error;
@@ -295,7 +328,7 @@ export default function ApdKaryawan({ canEdit, darkMode, notify, profile }) {
           if (e2) throw e2;
         }
       }
-      notify(f.id ? 'Data karyawan diperbarui.' : 'Karyawan ditambahkan.');
+      notify(f.id ? (koreksi.length ? 'Data karyawan dan tanda terima diperbarui. Jadwal berikutnya dihitung ulang.' : 'Data karyawan diperbarui.') : 'Karyawan ditambahkan.');
       setForm(null);
       await muat();
     } catch (err) {
@@ -354,20 +387,6 @@ export default function ApdKaryawan({ canEdit, darkMode, notify, profile }) {
     } catch (err) { notify('Gagal mencatat: ' + pgMessage(err), 'error'); }
     setSaving(false);
     return ok;
-  };
-
-  const tandai = async (jenis, rows) => {
-    if (!rows.length) return;
-    const ok = await catat(rows.map((r) => ({ karyawan_id: r.k.id, jenis })), tglBagi);
-    if (!ok) return;
-    if (jenis === 'sepatu') setSelSepatu(new Set()); else setSelSeragam(new Set());
-    if (rows.length === 1) {
-      const r = rows[0];
-      const iv = jenis === 'sepatu' ? r.j.intervalSepatu : INTERVAL_SERAGAM;
-      notify(`${jenis === 'sepatu' ? 'Sepatu' : 'Seragam'} ${r.k.nama} tercatat diterima ${fmt(tglBagi)}. Jadwal berikutnya ${fmt(addMonths(tglBagi, iv))}.`);
-    } else {
-      notify(`${rows.length} pembagian ${jenis} tercatat pada ${fmt(tglBagi)}. Jadwal berikutnya dihitung otomatis.`);
-    }
   };
 
   const simpanRusak = async () => {
@@ -588,34 +607,25 @@ export default function ApdKaryawan({ canEdit, darkMode, notify, profile }) {
   const tahunOpsi = Array.from({ length: 7 }, (_, i) => now.getFullYear() - 2 + i);
 
   /* ---------- tabel orderan (satu jenis) ---------- */
-  const TabelOrderan = ({ jenis, rows, sel, setSel }) => {
+  const TabelOrderan = ({ jenis, rows }) => {
     const nama = jenis === 'sepatu' ? 'Sepatu' : 'Seragam';
-    const semua = rows.length > 0 && rows.every((r) => sel.has(r.k.id));
-    const toggle = (id) => { const n = new Set(sel); if (n.has(id)) n.delete(id); else n.add(id); setSel(n); };
-    const dipilih = rows.filter((r) => sel.has(r.k.id));
     return (
       <div className={`rounded-xl shadow-sm border overflow-x-auto ${card}`}>
-        <div className="p-3 border-b flex flex-wrap gap-2 justify-between items-center">
+        <div className="p-3 border-b">
           <h3 className="font-bold text-sm">{jenis === 'sepatu' ? '👟' : '👕'} Orderan {nama} <span className="text-slate-400 font-normal">({rows.length} orang)</span></h3>
-          <button disabled={!dipilih.length || saving} onClick={() => tandai(jenis, dipilih)}
-            className="bg-emerald-600 disabled:opacity-40 text-white px-3 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1">
-            <Check size={14} /> Tandai {dipilih.length || ''} terpilih sudah dibagikan
-          </button>
         </div>
         <table className="w-full min-w-[760px] text-left text-sm">
           <thead className={`border-b font-semibold leading-tight ${thead}`}>
             <tr>
-              <th className="p-2.5 w-8"><input type="checkbox" checked={semua} onChange={() => setSel(semua ? new Set() : new Set(rows.map((r) => r.k.id)))} /></th>
               <th className="p-2.5">NRP AMODI</th><th className="p-2.5 text-left">NAMA</th><th className="p-2.5 text-left">JABATAN</th>
-              <th className="p-2.5">UKURAN</th><th className="p-2.5">JUMLAH</th><th className="p-2.5">JADWAL</th><th className="p-2.5">TERIMA TERAKHIR</th><th className="p-2.5">STATUS</th><th className="p-2.5">AKSI</th>
+              <th className="p-2.5">UKURAN</th><th className="p-2.5">JUMLAH</th><th className="p-2.5">JADWAL</th><th className="p-2.5">TERIMA TERAKHIR</th><th className="p-2.5">STATUS</th>
             </tr>
           </thead>
           <tbody className={`divide-y ${divide}`}>
             {rows.length === 0 ? (
-              <tr><td colSpan="10" className="p-6 text-center text-slate-400">Tidak ada jadwal {nama.toLowerCase()} pada {NAMA_BULAN[bln - 1]} {thn}.</td></tr>
+              <tr><td colSpan="8" className="p-6 text-center text-slate-400">Tidak ada jadwal {nama.toLowerCase()} pada {NAMA_BULAN[bln - 1]} {thn}.</td></tr>
             ) : rows.map((r) => (
               <tr key={r.k.id} className={hoverRow}>
-                <td className="p-2.5 text-center"><input type="checkbox" checked={sel.has(r.k.id)} onChange={() => toggle(r.k.id)} /></td>
                 <td className="p-2.5 text-center font-mono text-xs">{r.k.nrp_amodi || r.k.nrp}</td>
                 <td className="p-2.5 font-semibold">{r.k.nama}</td>
                 <td className="p-2.5">{r.k.jabatan || '-'}</td>
@@ -624,10 +634,6 @@ export default function ApdKaryawan({ canEdit, darkMode, notify, profile }) {
                 <td className="p-2.5 text-center whitespace-nowrap">{fmt(r.tgl)}{(jenis === 'sepatu' ? r.j.belumPernahSepatu : r.j.belumPernahSeragam) && <div className="text-[10px] text-slate-400">pembagian pertama</div>}</td>
                 <td className="p-2.5 text-center whitespace-nowrap">{fmt(jenis === 'sepatu' ? r.j.lastSepatu : r.j.lastSeragam)}</td>
                 <td className="p-2.5 text-center">{chip(r.status)}</td>
-                <td className="p-2.5 text-center">
-                  <button disabled={saving} onClick={() => tandai(jenis, [r])} title={`Catat sudah dibagikan pada ${fmt(tglBagi)}`}
-                    className="p-1.5 text-emerald-600 hover:bg-emerald-50 rounded disabled:opacity-40"><Check size={16} /></button>
-                </td>
               </tr>
             ))}
           </tbody>
@@ -755,7 +761,7 @@ export default function ApdKaryawan({ canEdit, darkMode, notify, profile }) {
                 <tbody className={`divide-y ${divide}`}>
                   {daftarHal.length === 0 ? (
                     <tr><td colSpan="11" className="p-8 text-center text-slate-400">{loading ? 'Memuat...' : 'Tidak ada data ditemukan.'}</td></tr>
-                  ) : daftarHal.map(({ k, j }) => {
+                  ) : daftarHal.map(({ k, j, riwayat }) => {
                     const sa = statusJadwal(j.nextSepatu, ymNow); const sg = statusJadwal(j.nextSeragam, ymNow);
                     const worst = !k.aktif ? 'nonaktif' : (sa === 'terlambat' || sg === 'terlambat') ? 'terlambat' : (sa === 'bulan' || sg === 'bulan') ? 'bulan' : 'aman';
                     return (
@@ -773,7 +779,7 @@ export default function ApdKaryawan({ canEdit, darkMode, notify, profile }) {
                           {worst === 'nonaktif' ? <><span className="bg-slate-200 text-slate-600 px-2 py-0.5 rounded-full font-bold text-[10px]">Resign</span>{k.tanggal_resign && <div className="text-[10px] text-slate-400 mt-0.5">{fmt(k.tanggal_resign)}</div>}</> : chip(worst)}
                         </td>
                         <td className="p-2.5 text-center whitespace-nowrap">
-                          <button title="Ubah data" onClick={() => setForm({ ...emptyForm(), ...Object.fromEntries(Object.entries(k).map(([a, b]) => [a, b ?? ''])) })} className="p-1.5 text-blue-500 hover:bg-blue-50 rounded"><Pencil size={14} /></button>
+                          <button title="Ubah data" onClick={() => setForm(formDari(k, riwayat))} className="p-1.5 text-blue-500 hover:bg-blue-50 rounded"><Pencil size={14} /></button>
                           <button title="Riwayat pembagian" onClick={() => { setRiwayatId(k.id); setFormRiwayat({ jenis: 'sepatu', kategori: 'rutin', tanggal: todayISO(), keterangan: '' }); }} className="p-1.5 text-slate-500 hover:bg-slate-100 rounded"><History size={14} /></button>
                           {k.aktif && <button title="Catat penggantian sepatu rusak" onClick={() => setRusak({ k, tanggal: todayISO(), keterangan: '' })} className="px-1.5 py-1 text-[10px] font-bold text-amber-700 bg-amber-100 hover:bg-amber-200 rounded mx-0.5">Ganti rusak</button>}
                           {k.aktif
@@ -1032,15 +1038,14 @@ export default function ApdKaryawan({ canEdit, darkMode, notify, profile }) {
             </div>
 
             <div className={`p-3 rounded-xl border shadow-sm flex flex-wrap gap-3 items-center ${card}`}>
-              <label className="text-xs font-semibold">Tanggal terima saat menandai sudah dibagikan:</label>
-              <input type="date" value={tglBagi} onChange={(e) => setTglBagi(e.target.value)} className="px-3 py-1.5 text-sm border border-slate-300 rounded-lg bg-white text-slate-900 font-medium" />
-              <span className="text-[11px] text-slate-400">Centang beberapa nama lalu tandai sekaligus, atau klik tanda centang di baris untuk satu orang. Jadwal berikutnya terbentuk otomatis.</span>
+              <span className="text-xs text-slate-400">Halaman ini hanya untuk melihat orderan, rekap ukuran, unduh Excel, dan cetak. Pencatatan penerimaan sepatu dan seragam dilakukan di tab Tanda Terima.</span>
+              <button onClick={() => setTab('terima')} className="px-3 py-1.5 rounded-lg bg-emerald-600 text-white text-xs font-semibold">Buka Tanda Terima</button>
             </div>
 
             <div className="grid lg:grid-cols-4 gap-4 items-start">
               <div className="lg:col-span-3 space-y-4">
-                {TabelOrderan({ jenis: 'sepatu', rows: orderan.sepatu, sel: selSepatu, setSel: setSelSepatu })}
-                {TabelOrderan({ jenis: 'seragam', rows: orderan.seragam, sel: selSeragam, setSel: setSelSeragam })}
+                {TabelOrderan({ jenis: 'sepatu', rows: orderan.sepatu })}
+                {TabelOrderan({ jenis: 'seragam', rows: orderan.seragam })}
               </div>
               <div className="space-y-4">
                 {TabelRekap({ judul: 'Rekap Sepatu untuk PO', rows: rekapSepatu, total: totSepatu, satuan: 'psg' })}
@@ -1175,13 +1180,13 @@ export default function ApdKaryawan({ canEdit, darkMode, notify, profile }) {
             <Label text="Tanggal masuk kerja"><input type="date" className={inputClass} value={form.tanggal_masuk} onChange={(e) => setForm({ ...form, tanggal_masuk: e.target.value })} /></Label>
             <Label text="Ukuran sepatu"><input className={inputClass} inputMode="numeric" value={form.ukuran_sepatu} onChange={(e) => setForm({ ...form, ukuran_sepatu: e.target.value })} placeholder="6" /></Label>
             <Label text="Ukuran seragam"><input className={inputClass} list="apd-seragam" value={form.ukuran_seragam} onChange={(e) => setForm({ ...form, ukuran_seragam: e.target.value })} placeholder="L" /></Label>
-            {!form.id && (
-              <>
-                <Label text="Terima sepatu terakhir (bila ada)"><input type="date" className={inputClass} value={form.terima_sepatu} onChange={(e) => setForm({ ...form, terima_sepatu: e.target.value })} /></Label>
-                <Label text="Terima seragam terakhir (bila ada)"><input type="date" className={inputClass} value={form.terima_seragam} onChange={(e) => setForm({ ...form, terima_seragam: e.target.value })} /></Label>
-                <p className="col-span-2 text-[11px] text-slate-400">Bila tanggal terima dikosongkan, jadwal pertama dihitung dari tanggal masuk kerja.</p>
-              </>
-            )}
+            <Label text={`Tanda terima sepatu terakhir${form.kat_sepatu === 'rusak' ? ' (ganti rusak)' : ''}`}><input type="date" max={today} className={inputClass} value={form.terima_sepatu} onChange={(e) => setForm({ ...form, terima_sepatu: e.target.value })} /></Label>
+            <Label text={`Tanda terima seragam terakhir`}><input type="date" max={today} className={inputClass} value={form.terima_seragam} onChange={(e) => setForm({ ...form, terima_seragam: e.target.value })} /></Label>
+            <p className="col-span-2 text-[11px] text-slate-400">
+              {form.id
+                ? 'Ubah tanggal bila salah memilih saat mencatat tanda terima. Kosongkan untuk membatalkan catatan terakhir itu. Jadwal berikutnya dihitung ulang otomatis; riwayat lengkap ada di ikon jam pada daftar.'
+                : 'Bila dikosongkan, jadwal pertama dihitung dari tanggal masuk kerja.'}
+            </p>
             <Label text="Keterangan" className="col-span-2"><input className={inputClass} value={form.keterangan} onChange={(e) => setForm({ ...form, keterangan: e.target.value })} /></Label>
             <div className="col-span-2 flex justify-end gap-2 pt-2">
               <button type="button" onClick={() => setForm(null)} className="px-4 py-2 rounded-lg border border-slate-300 text-xs font-semibold">Batal</button>
