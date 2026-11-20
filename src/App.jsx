@@ -4,7 +4,7 @@ import {
   Search, Plus, LayoutDashboard, Box, ArrowDownToLine, ArrowUpFromLine,
   FileText, ClipboardList, BookOpen, BarChart3, Users, Settings, Moon, TrendingUp,
   TrendingDown, Calendar, X, Download, Trash2, AlertTriangle, ShoppingCart, Barcode,
-  Printer, History, LogOut, Pencil, Upload, Lock, Save, FilePlus2, Filter, Menu
+  Printer, History, LogOut, Pencil, Upload, Lock, Save, FilePlus2, Filter, Menu, HardHat
 } from 'lucide-react';
 
 import {
@@ -12,6 +12,7 @@ import {
   materialToRow, masukToRow, keluarToRow, loadMaterial, loadMasuk, loadKeluar, loadPo, loadOpname, loadUsers,
   poHeaderToRow
 } from './supabase';
+import ApdKaryawan from './ApdKaryawan';
 
 /* ============================== HELPER ============================== */
 const ROWS = 20;
@@ -1906,6 +1907,7 @@ export default function App() {
     { name: 'Stok Opname', icon: ClipboardList },
     { name: 'Kartu Stok', icon: BookOpen },
     { name: 'Laporan', icon: FileText },
+    ...(canEdit ? [{ name: 'APD Karyawan', icon: HardHat }] : []),
     ...(isAdmin ? [{ name: 'Pengguna', icon: Users }] : []),
     { name: 'Pengaturan', icon: Settings },
   ];
@@ -2708,6 +2710,11 @@ export default function App() {
               </table>
               <p className="p-3 text-[11px] text-slate-400 border-t">Catatan: "Cabut akses" menghapus profil pengguna sehingga tidak bisa masuk lagi. Akun loginnya dapat dihapus total dari dashboard Supabase → Authentication → Users.</p>
             </div>
+          )}
+
+          {/* ===================== APD KARYAWAN (sepatu & seragam) ===================== */}
+          {activeTab === 'APD Karyawan' && canEdit && (
+            <ApdKaryawan canEdit={canEdit} darkMode={darkMode} notify={notify} profile={profile} />
           )}
 
           {/* ===================== PENGATURAN ===================== */}
